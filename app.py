@@ -43,13 +43,7 @@ if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 # --- SISTEMA DE TELETRANSPORTE ---
 def teletransportar_para_alerta(alerta_id):
     st.session_state['alerta_focus'] = alerta_id
-    st.session_state['sub_menu_prob'] = "🔍 Detalhes e Ações"
-    st.session_state['menu_index'] = 1  
-    st.rerun()
-
-def teletransportar_para_forum(alerta_id):
-    st.session_state['alerta_focus'] = alerta_id
-    st.session_state['sub_menu_prob'] = "💬 Fórum de Discussão"
+    st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
     st.session_state['menu_index'] = 1  
     st.rerun()
 
@@ -98,14 +92,15 @@ def enviar_email(destinatario, assunto, mensagem_html):
         server.send_message(msg); server.quit()
     except Exception as e: print(f"Erro Email: {e}")
 
-def enviar_notificacao(user_login, titulo, corpo, link=""):
+def enviar_notificacao(user_login, titulo, corpo, link="", send_email=True):
     try:
         supabase.table("notifications").insert({"user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False}).execute()
-        resp = supabase.table("usuarios").select("email").eq("login", user_login).execute()
-        if len(resp.data) > 0:
-            email_destino = resp.data[0]['email']
-            html_msg = f"<p>Olá,</p><p>Você tem uma nova notificação no sistema:</p><div style='background-color: white; padding: 15px; border-left: 4px solid #00579D; margin: 20px 0;'><strong>{titulo}</strong><br><br>{corpo}</div><p>Acesse o painel para verificar.</p>"
-            enviar_email(email_destino, f"[WEG Alertas] {titulo}", html_msg)
+        if send_email:
+            resp = supabase.table("usuarios").select("email").eq("login", user_login).execute()
+            if len(resp.data) > 0:
+                email_destino = resp.data[0]['email']
+                html_msg = f"<p>Olá,</p><p>Você tem uma nova notificação no sistema:</p><div style='background-color: white; padding: 15px; border-left: 4px solid #00579D; margin: 20px 0;'><strong>{titulo}</strong><br><br>{corpo}</div><p>Acesse o painel para verificar.</p>"
+                enviar_email(email_destino, f"[WEG Alertas] {titulo}", html_msg)
     except: pass
 
 def aprovar_solicitacao_acesso(req_id, req_email, req_nome):
@@ -210,15 +205,12 @@ def render_header():
                     txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
                     if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                         supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
+                        
+                        # ROTEAMENTO PROFUNDO
                         if n['link'].startswith("Problemas"):
                             partes = n['link'].split("|")
                             if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
-                            st.session_state['sub_menu_prob'] = "🔍 Detalhes e Ações"
-                            st.session_state['menu_index'] = 1
-                        elif n['link'].startswith("Fórum"):
-                            partes = n['link'].split("|")
-                            if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
-                            st.session_state['sub_menu_prob'] = "💬 Fórum de Discussão"
+                            st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
                             st.session_state['menu_index'] = 1
                         elif n['link'] == "Minhas Ações":
                             st.session_state['menu_index'] = 2
@@ -244,7 +236,7 @@ def render_sidebar():
     return menu_selecionado
 
 # ==========================================
-# 6. PÁGINAS DO SISTEMA
+# 6. PÁGINAS DO SISTEMA COMPLETAS
 # ==========================================
 def pagina_dashboard():
     st.header("📊 Dashboard de Performance")
@@ -317,7 +309,8 @@ def pagina_problemas():
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
-    opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes e Ações", "💬 Fórum de Discussão"]
+    # === MENU DA ABA PROBLEMAS === (REDUZIDO PARA 3 ABAS)
+    opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Sala de Controle (Detalhes e Fórum)"]
     idx_sub = opcoes_sub.index(st.session_state['sub_menu_prob']) if st.session_state['sub_menu_prob'] in opcoes_sub else 0
     
     aba_atual = st.radio("Navegação:", opcoes_sub, index=idx_sub, horizontal=True)
@@ -346,7 +339,7 @@ def pagina_problemas():
                     with col1:
                         opcoes_ids_rapido = [str(p['id']) for p in problemas_db]
                         id_rapido = st.selectbox("ID do Alerta:", opcoes_ids_rapido)
-                        if st.button("Abrir Detalhe", type="primary", use_container_width=True):
+                        if st.button("Abrir Sala de Controle", type="primary", use_container_width=True):
                             teletransportar_para_alerta(int(id_rapido))
                 else: st.info("Nenhum alerta encontrado com os filtros selecionados.")
             else: st.info("Nenhum problema cadastrado no sistema.")
@@ -374,14 +367,15 @@ def pagina_problemas():
                             "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"), "anexo": nome_anexo
                         }).execute()
                         st.success("✅ Alerta registrado com sucesso!")
-                        teletransportar_para_alerta(res.data[0]['id'])
+                        teletransportar_para_alerta(res.data[0]['id']) # Pula direto pro alerta criado
                     except Exception as e: st.error(f"Erro no BD: {str(e)}")
                 else: st.warning("Título e Descrição são obrigatórios.")
 
-    elif aba_atual == "🔍 Detalhes e Ações":
+    elif aba_atual == "🔍 Sala de Controle (Detalhes e Fórum)":
         try:
             problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
             if problemas_db:
+                # SELETOR SUPERIOR
                 opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
                 idx_padrao = 0
                 if st.session_state['alerta_focus']:
@@ -391,7 +385,7 @@ def pagina_problemas():
                             
                 def limpa_foco(): st.session_state['alerta_focus'] = None
 
-                id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", opcoes_ids, index=idx_padrao, key='_sel_alerta', on_change=limpa_foco)
+                id_selecionado = st.selectbox("Selecione o Alerta para operar a Sala de Controle:", opcoes_ids, index=idx_padrao, key='_sel_alerta', on_change=limpa_foco)
                 
                 if id_selecionado != "":
                     id_real = int(id_selecionado.split(" - ")[0])
@@ -399,185 +393,173 @@ def pagina_problemas():
                     
                     if alerta:
                         st.markdown(f"### #{alerta['id']} - {alerta['titulo']}")
-                        
-                        # NOVIDADE: Botão de teletransporte pro Chat do Alerta
-                        if st.button("💬 Ver Fórum de Discussão deste Alerta"):
-                            teletransportar_para_forum(alerta['id'])
-                            
-                        c1, c2, c3, c4 = st.columns(4)
-                        c1.metric("Área", alerta['area'])
-                        c2.metric("Prioridade", alerta['prioridade'])
-                        c3.metric("Status", alerta['status'].upper())
-                        c4.metric("Vencimento SLA", alerta['sla_due_at'][:10])
-                        
-                        st.markdown("**Descrição:**")
-                        st.info(alerta['descricao'])
-                        if alerta['anexo']: st.markdown(f"📎 **Anexo:** `{alerta['anexo']}`")
                         st.markdown("---")
                         
-                        if alerta['status'] == 'aberto':
-                            st.markdown("### ⚙️ Análise do Facilitador")
-                            is_admin = st.session_state['current_user']['role'] == 'Admin'
-                            is_creator = st.session_state['current_user']['login'] == alerta['criado_por']
-                            
-                            fac_resp = supabase.table("area_facilitadores").select("facilitador_login").eq("area", alerta['area']).execute()
-                            fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
-                            is_facilitator = st.session_state['current_user']['login'] == fac_area
-                            
-                            if is_creator and not is_admin: st.warning("⚠️ Você não pode aprovar seu próprio alerta.")
-                            elif not is_admin and not is_facilitator: st.warning("⚠️ Apenas Admin ou Facilitador da área podem aprovar.")
-                            else:
-                                c_apr, c_rej = st.columns(2)
-                                with c_apr:
-                                    if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
-                                        supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
-                                        supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "aprovado", "motivo": "Aprovado via painel."}).execute()
-                                        enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", f"Problemas|{alerta['id']}")
-                                        st.success("Aprovado!"); st.rerun()
-                                with c_rej:
-                                    with st.popover("❌ Rejeitar", use_container_width=True):
-                                        motivo = st.text_area("Motivo da Rejeição*")
-                                        if st.button("Confirmar Rejeição") and motivo:
-                                            supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
-                                            supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "rejeitado", "motivo": motivo}).execute()
-                                            enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"Seu alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", f"Problemas|{alerta['id']}")
-                                            st.rerun()
+                        # ===============================================
+                        # LAYOUT PAINEL DUPLO (ESQUERDA: DADOS | DIREITA: FÓRUM)
+                        # ===============================================
+                        col_esq, col_dir = st.columns([6, 4], gap="large")
                         
-                        elif alerta['status'] == 'rejeitado':
-                            just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
-                            st.error(f"🚨 **ALERTA REJEITADO (Fechado)**\n\n**Motivo:** {just_db[-1]['motivo'] if just_db else 'Sem motivo registrado.'}")
+                        # --- LADO ESQUERDO: DADOS E AÇÕES ---
+                        with col_esq:
+                            c1, c2, c3, c4 = st.columns(4)
+                            c1.metric("Área", alerta['area'])
+                            c2.metric("Prioridade", alerta['prioridade'])
+                            c3.metric("Status", alerta['status'].upper())
+                            c4.metric("Vencimento SLA", alerta['sla_due_at'][:10])
                             
-                        elif alerta['status'] in ['aprovado', 'solucionado']:
-                            st.markdown("### ✅ Plano de Ações Corretivas")
-                            acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
+                            st.markdown("**Descrição:**")
+                            st.info(alerta['descricao'])
+                            if alerta['anexo']: st.markdown(f"📎 **Anexo:** `{alerta['anexo']}`")
+                            st.write("<br>", unsafe_allow_html=True)
                             
-                            if acoes_db:
-                                for acao in acoes_db:
-                                    with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
-                                        resp_db = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data
-                                        logins_resp = [r['colaborador_login'] for r in resp_db]
-                                        st.write(f"**Responsáveis:** {', '.join([u['nome'] for u in users_db if u['login'] in logins_resp])}")
-                                        
-                                        if st.session_state['current_user']['role'] == 'Admin' or st.session_state['current_user']['login'] in logins_resp:
-                                            with st.form(f"form_acao_{acao['id']}"):
-                                                novo_status = st.selectbox("Status", ["pendente", "em_andamento", "solucionado"], index=["pendente", "em_andamento", "solucionado"].index(acao['status']))
-                                                nova_obs = st.text_area("Observações da Ação", value=acao['observacao'] if acao['observacao'] else "")
-                                                if st.form_submit_button("Atualizar Ação"):
-                                                    supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
-                                                    if novo_status == 'solucionado' and acao['status'] != 'solucionado':
-                                                        enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
-                                                    st.rerun()
-                                        else: 
-                                            st.info("Apenas responsáveis podem editar.")
-                                            st.write(f"**Observações:** {acao['observacao']}")
-
-                            st.markdown("#### Adicionar Nova Ação")
-                            with st.form("form_nova_acao"):
-                                desc_acao = st.text_input("O que deve ser feito?")
-                                prazo_acao = st.date_input("Prazo final")
-                                options_usr = {u['login']: f"{u['nome']}" for u in users_db if u['ativo']}
-                                selecionados = st.multiselect("Responsáveis", list(options_usr.keys()), format_func=lambda x: options_usr[x])
+                            # --- APROVAÇÃO ---
+                            if alerta['status'] == 'aberto':
+                                st.markdown("#### ⚙️ Análise do Facilitador")
+                                is_admin = st.session_state['current_user']['role'] == 'Admin'
+                                is_creator = st.session_state['current_user']['login'] == alerta['criado_por']
                                 
-                                if st.form_submit_button("Salvar Ação"):
-                                    if desc_acao and selecionados:
-                                        res = supabase.table("problem_actions").insert({"problem_id": alerta['id'], "descricao": desc_acao, "status": "pendente", "prazo": str(prazo_acao), "criado_por": st.session_state['current_user']['login']}).execute()
-                                        for resp_log in selecionados:
-                                            supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
-                                            enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
-                                        st.success("Ação salva!"); st.rerun()
-                                    else:
-                                        st.error("Preencha descrição e escolha responsáveis.")
+                                fac_resp = supabase.table("area_facilitadores").select("facilitador_login").eq("area", alerta['area']).execute()
+                                fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
+                                is_facilitator = st.session_state['current_user']['login'] == fac_area
+                                
+                                if is_creator and not is_admin: st.warning("⚠️ Regra: Você não pode aprovar um alerta criado por você mesmo.")
+                                elif not is_admin and not is_facilitator: st.warning("⚠️ Permissão: Apenas o Admin ou o Facilitador da área podem aprovar.")
+                                else:
+                                    c_apr, c_rej = st.columns(2)
+                                    with c_apr:
+                                        if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
+                                            supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
+                                            supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "aprovado", "motivo": "Aprovado via painel."}).execute()
+                                            enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", f"Problemas|{alerta['id']}")
+                                            st.success("Aprovado!"); st.rerun()
+                                    with c_rej:
+                                        with st.popover("❌ Rejeitar", use_container_width=True):
+                                            motivo = st.text_area("Motivo da Rejeição*")
+                                            if st.button("Confirmar Rejeição") and motivo:
+                                                supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
+                                                supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "rejeitado", "motivo": motivo}).execute()
+                                                enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"Seu alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", f"Problemas|{alerta['id']}")
+                                                st.rerun()
+                            
+                            elif alerta['status'] == 'rejeitado':
+                                just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
+                                st.error(f"🚨 **ALERTA REJEITADO (Fechado)**\n\n**Motivo:** {just_db[-1]['motivo'] if just_db else 'Sem motivo registrado.'}")
+                                
+                            # --- PLANO DE AÇÕES CORRETIVAS ---
+                            elif alerta['status'] in ['aprovado', 'solucionado']:
+                                st.markdown("#### ✅ Plano de Ações Corretivas")
+                                acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
+                                
+                                if acoes_db:
+                                    for acao in acoes_db:
+                                        with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
+                                            resp_db = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data
+                                            logins_resp = [r['colaborador_login'] for r in resp_db]
+                                            st.write(f"**Responsáveis:** {', '.join([u['nome'] for u in users_db if u['login'] in logins_resp])}")
+                                            
+                                            if st.session_state['current_user']['role'] == 'Admin' or st.session_state['current_user']['login'] in logins_resp:
+                                                with st.form(f"form_acao_{acao['id']}"):
+                                                    novo_status = st.selectbox("Status", ["pendente", "em_andamento", "solucionado"], index=["pendente", "em_andamento", "solucionado"].index(acao['status']))
+                                                    nova_obs = st.text_area("Observações da Ação", value=acao['observacao'] if acao['observacao'] else "")
+                                                    if st.form_submit_button("Atualizar Ação"):
+                                                        supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
+                                                        if novo_status == 'solucionado' and acao['status'] != 'solucionado':
+                                                            enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
+                                                        st.rerun()
+                                            else: 
+                                                st.info("Apenas responsáveis podem editar.")
+                                                st.write(f"**Observações:** {acao['observacao']}")
+
+                                st.markdown("##### ➕ Adicionar Nova Ação")
+                                with st.form("form_nova_acao"):
+                                    desc_acao = st.text_input("O que deve ser feito?")
+                                    prazo_acao = st.date_input("Prazo final")
+                                    options_usr = {u['login']: f"{u['nome']}" for u in users_db if u['ativo']}
+                                    selecionados = st.multiselect("Responsáveis", list(options_usr.keys()), format_func=lambda x: options_usr[x])
+                                    
+                                    if st.form_submit_button("Salvar Ação"):
+                                        if desc_acao and selecionados:
+                                            res = supabase.table("problem_actions").insert({"problem_id": alerta['id'], "descricao": desc_acao, "status": "pendente", "prazo": str(prazo_acao), "criado_por": st.session_state['current_user']['login']}).execute()
+                                            for resp_log in selecionados:
+                                                supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
+                                                enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
+                                            st.success("Ação salva!"); st.rerun()
+                                        else:
+                                            st.error("Preencha descrição e escolha responsáveis.")
+
+                        # --- LADO DIREITO: FÓRUM/CHAT ---
+                        with col_dir:
+                            st.markdown("#### 💬 Fórum de Insights")
+                            st.caption("Chat focado na resolução deste problema.")
+                            
+                            # Controle de Citação
+                            reply_key = f"reply_focus_{alerta['id']}"
+                            if reply_key not in st.session_state: st.session_state[reply_key] = None
+
+                            # Área com Scroll para as mensagens
+                            caixa_chat = st.container(height=500)
+                            
+                            with caixa_chat:
+                                comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
+                                
+                                if comments_db:
+                                    for c in comments_db:
+                                        autor_nome = next((u['nome'] for u in users_db if u['login'] == c['autor']), c['autor'])
+                                        data_f = c['criado_em'][:16].replace('T', ' ')
+                                        
+                                        is_me = c['autor'] == st.session_state['current_user']['login']
+                                        avatar_icon = "🧑‍💻" if is_me else "💡"
+                                        nome_display = "Você" if is_me else autor_nome
+                                        
+                                        with st.chat_message("user" if is_me else "assistant", avatar=avatar_icon):
+                                            st.markdown(f"**{nome_display}** *(em {data_f})*")
+                                            st.write(c['texto'])
+                                            if st.button("↩️ Responder", key=f"btn_rep_{c['id']}"):
+                                                st.session_state[reply_key] = {"nome": nome_display, "texto": c['texto']}
+                                                st.rerun()
+                                else:
+                                    st.info("Nenhum insight ainda. Seja o primeiro a dar um pitaco!")
+                            
+                            st.write("<br>", unsafe_allow_html=True)
+                            
+                            # Input e Controle de Email Condicional
+                            if st.session_state[reply_key]:
+                                rep = st.session_state[reply_key]
+                                st.info(f"↩️ **Respondendo a {rep['nome']}:** _{rep['texto'][:50]}..._")
+                                if st.button("❌ Cancelar Resposta", key=f"canc_rep_{alerta['id']}"):
+                                    st.session_state[reply_key] = None; st.rerun()
+
+                            with st.form(key=f"form_chat_{alerta['id']}", clear_on_submit=True):
+                                novo_comentario = st.text_input("Escreva seu insight aqui (Aperte Enter para enviar)...")
+                                
+                                # SEGREDO DO CONTROLE DE E-MAIL AQUI
+                                notificar_email = st.checkbox("🔔 Avisar autor do alerta por e-mail", value=False)
+                                
+                                if st.form_submit_button("Enviar Mensagem"):
+                                    if novo_comentario:
+                                        texto_final = novo_comentario
+                                        if st.session_state[reply_key]:
+                                            rep = st.session_state[reply_key]
+                                            texto_final = f"> **Em resposta a {rep['nome']}:**\n> _{rep['texto']}_\n\n{novo_comentario}"
+                                            
+                                        supabase.table("problem_comments").insert({
+                                            "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
+                                            "texto": texto_final, "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        }).execute()
+                                        
+                                        st.session_state[reply_key] = None 
+                                        
+                                        if st.session_state['current_user']['login'] != alerta['criado_por']:
+                                            nome_ajudante = st.session_state['current_user']['nome']
+                                            # Aqui ele usa o Flag do checkbox para decidir se manda o email real ou só o sino!
+                                            enviar_notificacao(alerta['criado_por'], "Novo Insight no Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Problemas|{alerta['id']}", send_email=notificar_email)
+                                            
+                                        st.rerun()
+                                    else: st.warning("Escreva alguma coisa antes de enviar.")
+
         except Exception as e: st.error(f"Erro na exibição dos detalhes: {e}")
 
-    # === ABA 4: FÓRUM COM CITAÇÃO TIPO WHATSAPP ===
-    elif aba_atual == "💬 Fórum de Discussão":
-        try:
-            problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
-            if problemas_db:
-                opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
-                idx_padrao = 0
-                if st.session_state['alerta_focus']:
-                    for i, opt in enumerate(opcoes_ids):
-                        if opt.startswith(str(st.session_state['alerta_focus']) + " -"):
-                            idx_padrao = i; break
-                            
-                def limpa_foco_forum(): st.session_state['alerta_focus'] = None
-
-                id_selecionado = st.selectbox("Selecione o Alerta para acessar o Fórum:", opcoes_ids, index=idx_padrao, key='_sel_alerta_forum', on_change=limpa_foco_forum)
-                
-                if id_selecionado != "":
-                    id_real = int(id_selecionado.split(" - ")[0])
-                    alerta = next((p for p in problemas_db if p['id'] == id_real), None)
-                    
-                    if alerta:
-                        st.markdown(f"### 💬 Fórum: #{alerta['id']} - {alerta['titulo']}")
-                        st.caption("Deixe seu pitaco, sugestão alternativa ou dúvida. Toda ajuda coletiva é bem-vinda!")
-                        st.markdown("---")
-                        
-                        # Controle de Citação (Responder)
-                        reply_key = f"reply_focus_{alerta['id']}"
-                        if reply_key not in st.session_state: st.session_state[reply_key] = None
-
-                        comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
-                        
-                        if comments_db:
-                            for c in comments_db:
-                                autor_nome = next((u['nome'] for u in users_db if u['login'] == c['autor']), c['autor'])
-                                data_f = c['criado_em'][:16].replace('T', ' ')
-                                
-                                is_me = c['autor'] == st.session_state['current_user']['login']
-                                avatar_icon = "🧑‍💻" if is_me else "💡"
-                                nome_display = "Você" if is_me else autor_nome
-                                
-                                with st.chat_message("user" if is_me else "assistant", avatar=avatar_icon):
-                                    st.markdown(f"**{nome_display}** *(em {data_f})*")
-                                    st.write(c['texto'])
-                                    
-                                    # Botão Responder minúsculo debaixo do texto
-                                    if st.button("↩️ Responder", key=f"btn_rep_{c['id']}"):
-                                        st.session_state[reply_key] = {"nome": nome_display, "texto": c['texto']}
-                                        st.rerun()
-                        else:
-                            st.info("Nenhum insight ainda. Seja o primeiro a dar um pitaco!")
-                            
-                        st.write("<br><br>", unsafe_allow_html=True)
-                        
-                        # Input de Novo Comentário (com formulário pra aceitar "Enter")
-                        if st.session_state[reply_key]:
-                            rep = st.session_state[reply_key]
-                            st.info(f"↩️ **Respondendo a {rep['nome']}:** _{rep['texto'][:50]}..._")
-                            if st.button("❌ Cancelar Resposta", key=f"canc_rep_{alerta['id']}"):
-                                st.session_state[reply_key] = None
-                                st.rerun()
-
-                        with st.form(key=f"form_chat_{alerta['id']}", clear_on_submit=True):
-                            novo_comentario = st.text_input("Escreva seu insight aqui (Aperte Enter para enviar)...")
-                            if st.form_submit_button("Enviar Mensagem"):
-                                if novo_comentario:
-                                    texto_final = novo_comentario
-                                    # Se estiver respondendo alguém, embute a citação no texto!
-                                    if st.session_state[reply_key]:
-                                        rep = st.session_state[reply_key]
-                                        texto_final = f"> **Em resposta a {rep['nome']}:**\n> _{rep['texto']}_\n\n{novo_comentario}"
-                                        
-                                    supabase.table("problem_comments").insert({
-                                        "problem_id": alerta['id'],
-                                        "autor": st.session_state['current_user']['login'],
-                                        "texto": texto_final,
-                                        "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    }).execute()
-                                    
-                                    st.session_state[reply_key] = None # Limpa a resposta após enviar
-                                    
-                                    if st.session_state['current_user']['login'] != alerta['criado_por']:
-                                        nome_ajudante = st.session_state['current_user']['nome']
-                                        enviar_notificacao(alerta['criado_por'], "Novo Insight no seu Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Fórum|{alerta['id']}")
-                                        
-                                    st.rerun()
-                                else:
-                                    st.warning("Escreva alguma coisa antes de enviar.")
-        except Exception as e:
-            st.error(f"Erro ao carregar o chat: {e}")
 
 def pagina_acoes():
     st.header("✅ Minhas Ações Corretivas")
