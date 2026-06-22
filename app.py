@@ -68,7 +68,6 @@ def fazer_logout():
 def aprovar_solicitacao(req_id, req_email, req_nome):
     supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
     login_extraido = req_email.strip().lower().split('@')[0]
-    
     check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
     if len(check.data) == 0:
         supabase.table("usuarios").insert({
@@ -96,8 +95,7 @@ def render_login():
             with st.form("form_login"):
                 usuario_login = st.text_input("Usuário WEG")
                 senha = st.text_input("Senha", type="password")
-                btn_login = st.form_submit_button("Entrar", use_container_width=True)
-                if btn_login:
+                if st.form_submit_button("Entrar", use_container_width=True):
                     if fazer_login(usuario_login, senha): st.rerun()
                     else: st.error("Usuário ou senha incorretos, ou cadastro inativo.")
         
@@ -112,7 +110,7 @@ def render_login():
                             "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         }).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação.")
-                    else: st.warning("Preencha todos os campos.")
+                    else: st.warning("Preencha todos os campos obrigatórios.")
                         
         with aba_reset:
             st.info("Informe seu usuário para redefinir a senha.")
@@ -176,7 +174,7 @@ def pagina_dashboard():
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
     
-    users_db = supabase.table("usuarios").select("area").execute().data
+    users_db = supabase.table("usuarios").select("*").execute().data
     areas = list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir']))
     areas.sort()
     if not areas: areas = ["Geral"]
@@ -190,7 +188,7 @@ def pagina_problemas():
         with colF2: filtro_prio = st.selectbox("Prioridade", ["Todas", "Urgente", "Normal", "Baixo"])
             
         try:
-            problemas_db = supabase.table("problemas").select("*").execute().data
+            problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
             if problemas_db:
                 df_prob = pd.DataFrame(problemas_db)
                 if filtro_status != "Todos": df_prob = df_prob[df_prob['status'] == filtro_status]
@@ -236,10 +234,10 @@ def pagina_problemas():
                         st.warning(f"Erro ao salvar: {str(e)}")
                 else: st.warning("Título e Descrição são obrigatórios.")
 
-    # ABA 3: DETALHES E APROVAÇÃO (PASSO 8)
+    # ABA 3: DETALHES (E PLANO DE AÇÃO)
     with tab_detalhe:
         try:
-            problemas_db = supabase.table("problemas").select("*").execute().data
+            problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
             if not problemas_db:
                 st.info("Não há alertas para detalhar.")
             else:
@@ -262,13 +260,11 @@ def pagina_problemas():
                         st.markdown("**Descrição:**")
                         st.info(alerta['descricao'])
                         
-                        # ======== LÓGICA DE APROVAÇÃO (PASSO 8) ========
                         st.markdown("---")
                         
+                        # ======== STATUS: ABERTO (APROVAÇÃO) ========
                         if alerta['status'] == 'aberto':
                             st.markdown("### ⚙️ Análise do Facilitador")
-                            
-                            # Verifica quem pode aprovar
                             is_admin = st.session_state['current_user']['role'] == 'Admin'
                             is_creator = st.session_state['current_user']['login'] == alerta['criado_por']
                             
@@ -276,62 +272,144 @@ def pagina_problemas():
                             fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
                             is_facilitator = st.session_state['current_user']['login'] == fac_area
                             
-                            # Regra: Só admin aprova o próprio. Facilitador aprova da sua área (desde que não seja dele).
                             if is_creator and not is_admin:
-                                st.warning("⚠️ **Bloqueado:** Você não pode aprovar um alerta criado por você mesmo. Aguarde o Administrador ou o Facilitador da área.")
+                                st.warning("⚠️ **Bloqueado:** Você não pode aprovar um alerta criado por você mesmo.")
                             elif not is_admin and not is_facilitator:
-                                st.warning("⚠️ **Acesso Restrito:** Apenas o Administrador ou o Facilitador desta área podem aprovar/rejeitar.")
+                                st.warning("⚠️ **Acesso Restrito:** Apenas o Admin ou o Facilitador podem aprovar.")
                             else:
                                 c_apr, c_rej = st.columns(2)
                                 with c_apr:
                                     if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
-                                        try:
-                                            supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
-                                            supabase.table("problem_justifications").insert({
-                                                "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
-                                                "acao": "aprovado", "motivo": "Aprovado no painel"
-                                            }).execute()
-                                            st.success("Alerta Aprovado! Atualize a página.")
-                                            st.rerun()
-                                        except Exception as e:
-                                            st.error(f"Erro ao aprovar. A tabela 'problem_justifications' pode estar bloqueada no Supabase. Destranque o cadeado (Disable RLS). Erro: {e}")
-
+                                        supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
+                                        st.success("Alerta Aprovado!"); st.rerun()
                                 with c_rej:
                                     with st.popover("❌ Rejeitar Alerta", use_container_width=True):
-                                        st.markdown("O alerta rejeitado ficará bloqueado.")
                                         motivo = st.text_area("Motivo da Rejeição*")
                                         if st.button("Confirmar Rejeição"):
                                             if motivo:
-                                                try:
-                                                    supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
-                                                    supabase.table("problem_justifications").insert({
-                                                        "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
-                                                        "acao": "rejeitado", "motivo": motivo
-                                                    }).execute()
-                                                    st.rerun()
-                                                except Exception as e:
-                                                    st.error(f"Erro. Destranque a tabela 'problem_justifications' no Supabase. Erro: {e}")
-                                            else:
-                                                st.error("O motivo é obrigatório.")
+                                                supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
+                                                supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "rejeitado", "motivo": motivo}).execute()
+                                                st.rerun()
+                                            else: st.error("Motivo obrigatório.")
                         
+                        # ======== STATUS: REJEITADO ========
                         elif alerta['status'] == 'rejeitado':
-                            # Busca o motivo da rejeição no banco
                             try:
                                 just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
                                 motivo_rej = just_db[-1]['motivo'] if just_db else "Motivo não encontrado."
-                            except:
-                                motivo_rej = "Erro ao carregar motivo."
-                            
+                            except: motivo_rej = "Erro ao carregar motivo."
                             st.error(f"🚨 **ALERTA REJEITADO (Somente Leitura)**\n\n**Motivo:** {motivo_rej}")
                             
-                        elif alerta['status'] == 'aprovado':
-                            st.success("✅ Este alerta está aprovado e pronto para receber Ações Corretivas.")
+                        # ======== STATUS: APROVADO (PLANO DE AÇÃO) ========
+                        elif alerta['status'] == 'aprovado' or alerta['status'] == 'solucionado':
+                            st.markdown("### ✅ Plano de Ações Corretivas")
+                            
+                            acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
+                            
+                            # Lista Ações Existentes
+                            if not acoes_db:
+                                st.info("Nenhuma ação cadastrada para este alerta ainda.")
+                            else:
+                                for acao in acoes_db:
+                                    with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
+                                        resp_db = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data
+                                        logins_resp = [r['colaborador_login'] for r in resp_db]
+                                        nomes_resp = [u['nome'] for u in users_db if u['login'] in logins_resp]
+                                        
+                                        st.write(f"**Responsáveis:** {', '.join(nomes_resp) if nomes_resp else 'Nenhum'}")
+                                        st.write(f"**Prazo:** {acao['prazo'][:10]}")
+                                        
+                                        # Edição de Status e Observação (Apenas Responsável ou Admin)
+                                        is_admin = st.session_state['current_user']['role'] == 'Admin'
+                                        is_resp = st.session_state['current_user']['login'] in logins_resp
+                                        
+                                        if is_admin or is_resp:
+                                            with st.form(f"form_acao_{acao['id']}"):
+                                                novo_status = st.selectbox("Status da Ação", ["pendente", "em_andamento", "solucionado"], index=["pendente", "em_andamento", "solucionado"].index(acao['status']))
+                                                nova_obs = st.text_area("Observações de acompanhamento", value=acao['observacao'] if acao['observacao'] else "")
+                                                if st.form_submit_button("Atualizar Ação"):
+                                                    try:
+                                                        supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
+                                                        st.success("Ação atualizada!"); st.rerun()
+                                                    except Exception as e:
+                                                        st.error(f"Erro. Destranque a tabela de ações. Erro: {e}")
+                                        else:
+                                            st.warning("Apenas os responsáveis ou Admin podem editar esta ação.")
+                                            st.write(f"**Observações registradas:** {acao['observacao'] if acao['observacao'] else 'Nenhuma.'}")
+
+                            # Formulário de Nova Ação (Opcional)
+                            st.markdown("#### Adicionar Nova Ação")
+                            with st.form("form_nova_acao"):
+                                desc_acao = st.text_input("O que deve ser feito?")
+                                prazo_acao = st.date_input("Prazo final")
+                                
+                                usuarios_ativos = [u for u in users_db if u['ativo']]
+                                options_usr = {u['login']: f"{u['nome']} ({u['area']})" for u in usuarios_ativos}
+                                selecionados = st.multiselect("Responsáveis", list(options_usr.keys()), format_func=lambda x: options_usr[x])
+                                
+                                if st.form_submit_button("Salvar Ação"):
+                                    if desc_acao and selecionados:
+                                        try:
+                                            res = supabase.table("problem_actions").insert({
+                                                "problem_id": alerta['id'], "descricao": desc_acao,
+                                                "status": "pendente", "prazo": str(prazo_acao),
+                                                "criado_por": st.session_state['current_user']['login']
+                                            }).execute()
+                                            
+                                            action_id = res.data[0]['id']
+                                            for resp_log in selecionados:
+                                                supabase.table("problem_action_responsibles").insert({"action_id": action_id, "colaborador_login": resp_log}).execute()
+                                                
+                                            st.success("Ação criada com sucesso!"); st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro. Destranque as tabelas de ações no Supabase. Erro: {e}")
+                                    else:
+                                        st.error("Preencha a descrição e escolha ao menos um responsável.")
         except Exception as e:
-            pass
+            st.error(f"Erro na tela de detalhes: {e}")
+
 
 def pagina_acoes():
-    st.header("Minhas Ações Corretivas")
-    st.info("Lista de ações. (Step 9)")
+    st.header("✅ Minhas Ações Corretivas")
+    st.markdown("Ações em que você foi designado como responsável.")
+    
+    try:
+        # Puxa os IDs das ações onde o usuário atual é responsável
+        meu_login = st.session_state['current_user']['login']
+        resp_db = supabase.table("problem_action_responsibles").select("action_id").eq("colaborador_login", meu_login).execute().data
+        
+        if not resp_db:
+            st.success("🎉 Você não possui nenhuma ação pendente no momento!")
+        else:
+            action_ids = [r['action_id'] for r in resp_db]
+            acoes_db = supabase.table("problem_actions").select("*").in_("id", action_ids).execute().data
+            
+            if acoes_db:
+                df_acoes = pd.DataFrame(acoes_db)
+                # Puxa titulos dos problemas
+                prob_ids = df_acoes['problem_id'].unique().tolist()
+                probs_db = supabase.table("problemas").select("id, titulo").in_("id", prob_ids).execute().data
+                prob_map = {p['id']: p['titulo'] for p in probs_db}
+                
+                df_acoes['Alerta_Origem'] = df_acoes['problem_id'].map(prob_map)
+                
+                df_display = df_acoes[['id', 'Alerta_Origem', 'descricao', 'prazo', 'status']].copy()
+                df_display.columns = ['ID Ação', 'Alerta Origem', 'O que fazer', 'Prazo', 'Status']
+                
+                def colorir_status_acao(val):
+                    if val == 'pendente': return 'color: red;'
+                    elif val == 'em_andamento': return 'color: orange;'
+                    elif val == 'solucionado': return 'color: green;'
+                    return ''
+                    
+                try: st.dataframe(df_display.style.map(colorir_status_acao, subset=['Status']), use_container_width=True, hide_index=True)
+                except: st.dataframe(df_display.style.applymap(colorir_status_acao, subset=['Status']), use_container_width=True, hide_index=True)
+                
+                st.info("💡 Dica: Para atualizar o status ou adicionar observações na sua ação, vá no Menu 'Problemas' -> Aba 'Detalhes' -> Escolha o Alerta Origem.")
+            else:
+                st.success("Nenhuma ação encontrada.")
+    except Exception as e:
+        st.error(f"Erro ao carregar Minhas Ações: {e}")
 
 def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores")
@@ -376,8 +454,6 @@ def pagina_administracao():
                     else:
                         fac_login = novo_fac.split("(")[-1].replace(")", "")
                         supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_login}).execute()
-                        usr = next((u for u in active_users if u['login'] == fac_login), None)
-                        if usr and usr['role'] == 'User': supabase.table("usuarios").update({"role": "Facilitador"}).eq("login", fac_login).execute()
                     st.success("Salvo!"); st.rerun()
 
     with colB:
