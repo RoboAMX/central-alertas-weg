@@ -64,15 +64,26 @@ def fazer_logout():
     st.session_state['menu_index'] = 0
     st.rerun()
 
-# --- MOTOR DE E-MAIL (SEM SILENCIADOR) ---
+def aprovar_solicitacao(req_id, req_email, req_nome):
+    supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
+    login_extraido = req_email.strip().lower().split('@')[0]
+    check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
+    if len(check.data) == 0:
+        supabase.table("usuarios").insert({
+            "login": login_extraido, "nome": req_nome, "email": req_email,
+            "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True
+        }).execute()
+        enviar_email(req_email, "Acesso Aprovado", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Usuário: <b>{login_extraido}</b> | Senha: <b>WEG2026</b>")
+
+def rejeitar_solicitacao(req_id):
+    supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
+
+# --- MOTOR DE E-MAIL ---
 def enviar_email(destinatario, assunto, mensagem_html):
     try:
         remetente = st.secrets.get("EMAIL_SENDER", "")
         senha = st.secrets.get("EMAIL_PASSWORD", "")
-        
-        if not remetente or not senha: 
-            st.warning("E-mail não enviado: As chaves EMAIL_SENDER e EMAIL_PASSWORD não estão configuradas nos Secrets.")
-            return
+        if not remetente or not senha: return
             
         msg = MIMEMultipart()
         msg['From'] = remetente
@@ -100,27 +111,18 @@ def enviar_email(destinatario, assunto, mensagem_html):
         server.send_message(msg)
         server.quit()
     except Exception as e:
-        st.error(f"Erro ao tentar enviar o E-mail pelo Gmail: {e}")
+        print(f"Erro Email: {e}") # Joga no terminal oculto
 
 # --- ENVIAR NOTIFICAÇÃO (IN-APP + EMAIL) ---
 def enviar_notificacao(user_login, titulo, corpo, link=""):
-    # 1. Tenta salvar no BD para o Sino
     try:
-        supabase.table("notifications").insert({
-            "user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False
-        }).execute()
-    except Exception as e:
-        st.warning(f"Erro no Supabase (Notificações): Verifique se a tabela 'notifications' está destrancada. Erro: {e}")
-        
-    # 2. Tenta disparar e-mail para o usuário
-    try:
+        supabase.table("notifications").insert({"user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False}).execute()
         resp = supabase.table("usuarios").select("email").eq("login", user_login).execute()
         if len(resp.data) > 0:
             email_destino = resp.data[0]['email']
             html_msg = f"<p>Olá,</p><p>Você tem uma nova notificação no sistema:</p><div style='background-color: white; padding: 15px; border-left: 4px solid #00579D; margin: 20px 0;'><strong>{titulo}</strong><br><br>{corpo}</div><p>Acesse o painel para verificar.</p>"
             enviar_email(email_destino, f"[WEG Alertas] {titulo}", html_msg)
-    except Exception as e:
-        st.warning(f"Erro ao buscar email do usuário: {e}")
+    except: pass
 
 # ==========================================
 # 4. TELAS DE LOGIN E RESET
@@ -417,17 +419,56 @@ def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     if st.session_state['current_user']['role'] != 'Admin': st.error("Acesso restrito."); return
     
-    # ATUALIZAR CONFIGURAÇÃO DE EMAIL AQUI
-    def update_email_settings(sender, pwd):
-        st.info("Para habilitar e-mails, adicione as chaves EMAIL_SENDER e EMAIL_PASSWORD em Manage App -> Settings -> Secrets do Streamlit Cloud.")
-        
     colA, colB = st.columns([1, 1])
     with colA:
         st.subheader("👨‍💼 Facilitadores")
-        st.info("Configurado e ok.")
+        users_db = supabase.table("usuarios").select("*").execute().data
+        areas = sorted(list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir'])))
+        if areas:
+            fac_map = {f['area']: f['facilitador_login'] for f in supabase.table("area_facilitadores").select("*").execute().data}
+            with st.form("form_facilitadores"):
+                area_selecionada = st.selectbox("Área", areas)
+                user_options = ["Nenhum"] + [f"{u['nome']} ({u['login']})" for u in users_db if u['ativo']]
+                idx = 0
+                if fac_map.get(area_selecionada):
+                    for i, opt in enumerate(user_options):
+                        if f"({fac_map.get(area_selecionada)})" in opt: idx = i; break
+                novo_fac = st.selectbox("Facilitador", user_options, index=idx)
+                if st.form_submit_button("Salvar"):
+                    if novo_fac == "Nenhum": supabase.table("area_facilitadores").delete().eq("area", area_selecionada).execute()
+                    else:
+                        fac_log = novo_fac.split("(")[-1].replace(")", "")
+                        supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_log}).execute()
+                    st.rerun()
+
     with colB:
-        st.subheader("📝 Solicitações")
-        st.info("Configurado e ok.")
+        st.subheader("📧 Teste de Conexão (E-mail)")
+        st.info("Verifica se as configurações do Gmail nos Secrets estão corretas.")
+        if st.button("Enviar E-mail de Teste para Mim", use_container_width=True):
+            remetente = st.secrets.get("EMAIL_SENDER", "")
+            senha = st.secrets.get("EMAIL_PASSWORD", "")
+            
+            if not remetente or not senha:
+                st.error("❌ As chaves EMAIL_SENDER e/ou EMAIL_PASSWORD não foram encontradas ou estão vazias nos Secrets do Streamlit.")
+            else:
+                try:
+                    server = smtplib.SMTP('smtp.gmail.com', 587)
+                    server.starttls()
+                    server.login(remetente, senha)
+                    
+                    # Tenta mandar um email para o próprio remetente como teste
+                    msg = MIMEMultipart()
+                    msg['From'] = remetente
+                    msg['To'] = remetente
+                    msg['Subject'] = "[TESTE] Conexão WEG Alertas"
+                    msg.attach(MIMEText("Se você recebeu isso, a conexão com o Gmail está 100% perfeita!", 'plain'))
+                    
+                    server.send_message(msg)
+                    server.quit()
+                    st.success(f"✅ Conexão bem-sucedida! E-mail de teste enviado para a caixa: {remetente}")
+                except Exception as e:
+                    st.error(f"❌ Erro retornado pelo Google: {e}")
+                    st.markdown("**Dica:** O Google bloqueia senhas normais. Você precisa gerar uma 'Senha de App' lá nas configurações de segurança da sua conta Google.")
 
 # ==========================================
 # 7. ROTEADOR
