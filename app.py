@@ -20,7 +20,7 @@ def inicializar_banco():
         st.session_state['db_users'] = {
             "roberto": {
                 "nome": "Roberto",
-                "email": "robertoa@weg.net",
+                "email": "roberto@weg.net",
                 "senha": "WEG2026", 
                 "area": "Almoxarifado - WEN SZO",
                 "role": "Admin", 
@@ -50,13 +50,13 @@ def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
     usuario = st.session_state['db_users'].get(usuario_login)
     
-    if usuario and usuario['ativo'] and usuario['senha'] == senha:
+    if usuario and usuario.get('ativo', True) and usuario.get('senha') == senha:
         st.session_state['authenticated'] = True
         st.session_state['current_user'] = {
             "login": usuario_login,
-            "nome": usuario['nome'],
-            "area": usuario['area'],
-            "role": usuario['role']
+            "nome": usuario.get('nome', usuario_login),
+            "area": usuario.get('area', 'Não definida'),
+            "role": usuario.get('role', 'User')
         }
         if senha == "WEG2026":
             st.session_state['must_change_password'] = True
@@ -72,7 +72,6 @@ def fazer_logout():
     st.rerun()
 
 def aprovar_solicitacao(req_id):
-    """Aprova acesso, cria o usuário extraindo o login do email"""
     for req in st.session_state['db_requests']:
         if req['id'] == req_id:
             req['status'] = 'aprovado'
@@ -238,7 +237,6 @@ def pagina_colaboradores():
     
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
-    # Se for Admin, mostra as 3 abas de gestão. Se não, só a lista.
     if is_admin:
         tab1, tab2, tab3 = st.tabs(["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"])
     else:
@@ -246,11 +244,16 @@ def pagina_colaboradores():
     
     # ABA 1: LISTA (Visível para todos)
     with tab1:
-        # Prepara os dados para exibição
         lista_usuarios = []
         for login, dados in st.session_state['db_users'].items():
             u = dados.copy()
             u['login'] = login
+            # DEFESA CONTRA FANTASMAS DA SESSÃO ANTIGA:
+            u['email'] = u.get('email', f"{login}@weg.net")
+            u['ativo'] = u.get('ativo', True)
+            u['role'] = u.get('role', 'User')
+            u['area'] = u.get('area', 'Não definida')
+            u['nome'] = u.get('nome', login)
             lista_usuarios.append(u)
             
         df_users = pd.DataFrame(lista_usuarios)
@@ -259,11 +262,9 @@ def pagina_colaboradores():
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
             df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
             
-            # Função para colorir status
             def colorir_ativo(val):
                 if isinstance(val, bool):
                     color = 'green' if val else 'red'
-                    texto = "Ativo" if val else "Inativo"
                     return f'color: {color}; font-weight: bold;'
                 return ''
                 
@@ -308,9 +309,7 @@ def pagina_colaboradores():
         with tab3:
             st.markdown("Selecione um usuário abaixo para editar suas informações ou desativar o seu acesso.")
             
-            # Pega lista de logins
             logins_disponiveis = list(st.session_state['db_users'].keys())
-            
             usuario_selecionado = st.selectbox("Selecione o Usuário:", logins_disponiveis)
             
             if usuario_selecionado:
@@ -319,18 +318,21 @@ def pagina_colaboradores():
                 with st.form("form_edit_colab"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        edit_nome = st.text_input("Nome Completo", value=user_data['nome'])
+                        edit_nome = st.text_input("Nome Completo", value=user_data.get('nome', ''))
                         edit_email = st.text_input("E-mail", value=user_data.get('email', f"{usuario_selecionado}@weg.net"))
-                        edit_area = st.text_input("Área / Setor", value=user_data['area'])
+                        edit_area = st.text_input("Área / Setor", value=user_data.get('area', ''))
                     with col2:
-                        edit_papel = st.selectbox("Nível de Acesso", ["User", "Facilitador", "Admin"], index=["User", "Facilitador", "Admin"].index(user_data['role']))
-                        edit_ativo = st.checkbox("Colaborador Ativo (Acesso Liberado)", value=user_data['ativo'])
+                        roles = ["User", "Facilitador", "Admin"]
+                        current_role = user_data.get('role', 'User')
+                        role_index = roles.index(current_role) if current_role in roles else 0
+                        
+                        edit_papel = st.selectbox("Nível de Acesso", roles, index=role_index)
+                        edit_ativo = st.checkbox("Colaborador Ativo (Acesso Liberado)", value=user_data.get('ativo', True))
                     
                     st.info("Nota: A senha do usuário não pode ser alterada aqui. Caso ele esqueça, peça para usar a aba 'Esqueci a Senha' no login.")
                     
                     btn_edit = st.form_submit_button("Salvar Alterações")
                     if btn_edit:
-                        # Trava de segurança: O Admin não pode desativar a si mesmo ou tirar seu próprio admin
                         if usuario_selecionado == st.session_state['current_user']['login'] and (not edit_ativo or edit_papel != "Admin"):
                             st.error("Segurança: Você não pode desativar seu próprio usuário ou remover seu status de Admin.")
                         else:
