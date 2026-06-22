@@ -2,6 +2,9 @@ import streamlit as st
 import datetime
 import pandas as pd
 from supabase import create_client, Client
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # ==========================================
 # 1. CONFIGURAÇÃO DA PÁGINA
@@ -14,7 +17,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. CONEXÃO COM BANCO DE DADOS E MEMÓRIA
+# 2. CONEXÃO COM BANCO DE DADOS (SUPABASE)
 # ==========================================
 @st.cache_resource
 def init_connection() -> Client:
@@ -28,7 +31,6 @@ except Exception as e:
     st.error("⚠️ Erro de conexão com o Banco de Dados.")
     st.stop()
 
-# Inicialização de Variáveis de Sessão Seguras
 if 'authenticated' not in st.session_state: st.session_state['authenticated'] = False
 if 'must_change_password' not in st.session_state: st.session_state['must_change_password'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
@@ -36,7 +38,7 @@ if 'menu_index' not in st.session_state: st.session_state['menu_index'] = 0
 if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 
 # ==========================================
-# 3. FUNÇÕES DE AUTENTICAÇÃO E BD
+# 3. FUNÇÕES DE AUTENTICAÇÃO, BD E E-MAIL
 # ==========================================
 def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
@@ -71,20 +73,62 @@ def aprovar_solicitacao(req_id, req_email, req_nome):
             "login": login_extraido, "nome": req_nome, "email": req_email,
             "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True
         }).execute()
+        
+        # Envia email de boas vindas
+        enviar_email(req_email, "Acesso Aprovado - Central de Alertas", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Seu usuário é <b>{login_extraido}</b> e sua senha temporária é <b>WEG2026</b>.<br>Acesse o sistema e troque sua senha imediatamente.")
 
 def rejeitar_solicitacao(req_id):
     supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
 
-# Função auxiliar para enviar notificação (AGORA COM LINK)
+# --- MOTOR DE E-MAIL ---
+def enviar_email(destinatario, assunto, mensagem_html):
+    try:
+        remetente = st.secrets.get("EMAIL_SENDER", "")
+        senha = st.secrets.get("EMAIL_PASSWORD", "")
+        
+        if not remetente or not senha: return # Pula silenciosamente se não houver config
+            
+        msg = MIMEMultipart()
+        msg['From'] = remetente
+        msg['To'] = destinatario
+        msg['Subject'] = assunto
+        
+        # Template HTML corporativo WEG (Azul)
+        html_completo = f"""
+        <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+            <div style="background-color: #00579D; padding: 20px; text-align: center; color: white;">
+                <h2 style="margin: 0;">Central de Alertas - WEG</h2>
+            </div>
+            <div style="padding: 20px; background-color: #f9f9f9;">
+                {mensagem_html}
+            </div>
+            <div style="background-color: #eee; padding: 10px; text-align: center; font-size: 12px; color: #666;">
+                Este é um e-mail automático. Por favor, não responda.
+            </div>
+        </div>
+        """
+        msg.attach(MIMEText(html_completo, 'html'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(remetente, senha)
+        server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        print(f"Erro Email: {e}")
+
+# --- ENVIAR NOTIFICAÇÃO (IN-APP + EMAIL) ---
 def enviar_notificacao(user_login, titulo, corpo, link=""):
     try:
-        supabase.table("notifications").insert({
-            "user_login": user_login,
-            "titulo": titulo,
-            "corpo": corpo,
-            "link": link,
-            "lida": False
-        }).execute()
+        # 1. Salva no BD para o Sino
+        supabase.table("notifications").insert({"user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False}).execute()
+        
+        # 2. Dispara e-mail para o usuário
+        resp = supabase.table("usuarios").select("email").eq("login", user_login).execute()
+        if len(resp.data) > 0:
+            email_destino = resp.data[0]['email']
+            html_msg = f"<p>Olá,</p><p>Você tem uma nova notificação no sistema:</p><div style='background-color: white; padding: 15px; border-left: 4px solid #00579D; margin: 20px 0;'><strong>{titulo}</strong><br><br>{corpo}</div><p>Acesse o painel para verificar.</p>"
+            enviar_email(email_destino, f"[WEG Alertas] {titulo}", html_msg)
     except: pass
 
 # ==========================================
@@ -149,7 +193,7 @@ def render_trocar_senha():
                     st.rerun()
 
 # ==========================================
-# 5. COMPONENTES DE LAYOUT (SINO E PUSH IN-APP)
+# 5. COMPONENTES DE LAYOUT
 # ==========================================
 def render_header():
     col1, col2, col3 = st.columns([7, 2, 2])
@@ -159,12 +203,9 @@ def render_header():
         try:
             notifs = supabase.table("notifications").select("*").eq("user_login", st.session_state['current_user']['login']).eq("lida", False).order("id", desc=True).execute().data
             qtd = len(notifs)
-        except:
-            notifs = []; qtd = 0
+        except: notifs = []; qtd = 0
             
-        # PUSH NOTIFICATION (TOAST DO STREAMLIT)
-        if qtd > st.session_state['notif_count']:
-            st.toast("Você tem novas notificações!", icon="🔔")
+        if qtd > st.session_state['notif_count']: st.toast("Você tem novas notificações!", icon="🔔")
         st.session_state['notif_count'] = qtd
             
         cor_sino = "🔴" if qtd > 0 else "⚪"
@@ -177,13 +218,9 @@ def render_header():
             else:
                 for n in notifs:
                     st.warning(f"**{n['titulo']}**\n\n{n['corpo']}")
-                    
-                    # Roteador Interno via Notificação
                     txt_btn = f"Ler e ir para {n['link']}" if n['link'] else "Marcar como Lida"
                     if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                         supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
-                        
-                        # Muda a aba lateral automaticamente
                         if n['link'] == "Problemas": st.session_state['menu_index'] = 1
                         elif n['link'] == "Minhas Ações": st.session_state['menu_index'] = 2
                         st.rerun()
@@ -197,20 +234,10 @@ def render_sidebar():
     try: st.sidebar.image("logo_weg.png", width=150)
     except: st.sidebar.markdown("**[LOGO WEG]**")
     st.sidebar.markdown("### 🚨 Navegação")
-    
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
     
-    # Callback para manter a navegação sincronizada (Resolve o Erro de Widget Key)
-    def update_menu():
-        st.session_state['menu_index'] = opcoes_menu.index(st.session_state['_menu_radio'])
-        
-    menu_selecionado = st.sidebar.radio(
-        "Selecione a página:", 
-        opcoes_menu, 
-        index=st.session_state['menu_index'], 
-        key='_menu_radio',
-        on_change=update_menu
-    )
+    def update_menu(): st.session_state['menu_index'] = opcoes_menu.index(st.session_state['_menu_radio'])
+    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'], key='_menu_radio', on_change=update_menu)
     
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
@@ -250,7 +277,7 @@ def pagina_problemas():
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
                 else: st.info("Nenhum alerta encontrado.")
             else: st.info("Nenhum problema cadastrado.")
-        except Exception as e: st.error(f"Erro: {str(e)}")
+        except: pass
 
     with tab_novo:
         with st.form("form_novo_prob"):
@@ -264,17 +291,14 @@ def pagina_problemas():
                 if titulo and descricao:
                     dias_sla = {"Urgente": 1, "Normal": 3, "Baixo": 5}
                     prazo = datetime.datetime.now() + datetime.timedelta(days=dias_sla[prioridade])
-                    try:
-                        supabase.table("problemas").insert({
-                            "titulo": titulo, "descricao": descricao, "area": area_prob,
-                            "prioridade": prioridade, "status": "aberto",
-                            "criado_por": st.session_state['current_user']['login'],
-                            "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S")
-                        }).execute()
-                        st.success("✅ Alerta registrado com sucesso!")
-                        st.rerun()
-                    except Exception as e: st.warning(f"Erro: {str(e)}")
+                    supabase.table("problemas").insert({
+                        "titulo": titulo, "descricao": descricao, "area": area_prob,
+                        "prioridade": prioridade, "status": "aberto", "criado_por": st.session_state['current_user']['login'],
+                        "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S")
+                    }).execute()
+                    st.success("✅ Alerta registrado com sucesso!")
+                    st.rerun()
                 else: st.warning("Título e Descrição obrigatórios.")
 
     with tab_detalhe:
@@ -305,21 +329,22 @@ def pagina_problemas():
                             fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
                             is_facilitator = st.session_state['current_user']['login'] == fac_area
                             
-                            if is_creator and not is_admin: st.warning("⚠️ Bloqueado: Você não pode aprovar um alerta criado por você mesmo.")
-                            elif not is_admin and not is_facilitator: st.warning("⚠️ Apenas o Admin ou Facilitador podem aprovar.")
+                            if is_creator and not is_admin: st.warning("⚠️ Você não aprova seu próprio alerta.")
+                            elif not is_admin and not is_facilitator: st.warning("⚠️ Apenas Admin ou Facilitador aprovam.")
                             else:
                                 c_apr, c_rej = st.columns(2)
                                 with c_apr:
                                     if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
                                         supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
+                                        enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", "Problemas")
                                         st.success("Aprovado!"); st.rerun()
                                 with c_rej:
                                     with st.popover("❌ Rejeitar", use_container_width=True):
                                         motivo = st.text_area("Motivo da Rejeição*")
-                                        if st.button("Confirmar Rejeição") and motivo:
+                                        if st.button("Confirmar") and motivo:
                                             supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
                                             supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "rejeitado", "motivo": motivo}).execute()
-                                            enviar_notificacao(alerta['criado_por'], f"Alerta #{alerta['id']} Rejeitado", f"Motivo: {motivo}", "Problemas")
+                                            enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"Seu alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", "Problemas")
                                             st.rerun()
                         
                         elif alerta['status'] == 'rejeitado':
@@ -329,7 +354,6 @@ def pagina_problemas():
                         elif alerta['status'] in ['aprovado', 'solucionado']:
                             st.markdown("### ✅ Plano de Ações Corretivas")
                             acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
-                            
                             if acoes_db:
                                 for acao in acoes_db:
                                     with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
@@ -344,7 +368,7 @@ def pagina_problemas():
                                                 if st.form_submit_button("Atualizar Ação"):
                                                     supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
                                                     if novo_status == 'solucionado' and acao['status'] != 'solucionado':
-                                                        enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' (Alerta #{alerta['id']}) finalizada!", "Problemas")
+                                                        enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", "Problemas")
                                                     st.rerun()
                                         else: st.write(f"**Observações:** {acao['observacao']}")
 
@@ -357,9 +381,8 @@ def pagina_problemas():
                                 
                                 if st.form_submit_button("Salvar Ação") and desc_acao and selecionados:
                                     res = supabase.table("problem_actions").insert({"problem_id": alerta['id'], "descricao": desc_acao, "status": "pendente", "prazo": str(prazo_acao), "criado_por": st.session_state['current_user']['login']}).execute()
-                                    action_id = res.data[0]['id']
                                     for resp_log in selecionados:
-                                        supabase.table("problem_action_responsibles").insert({"action_id": action_id, "colaborador_login": resp_log}).execute()
+                                        supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
                                         enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}' (Alerta #{alerta['id']})", "Minhas Ações")
                                     st.success("Criado!"); st.rerun()
         except: pass
@@ -370,7 +393,7 @@ def pagina_acoes():
     try:
         meu_login = st.session_state['current_user']['login']
         resp_db = supabase.table("problem_action_responsibles").select("action_id").eq("colaborador_login", meu_login).execute().data
-        if not resp_db: st.success("🎉 Você não possui nenhuma ação pendente no momento!")
+        if not resp_db: st.success("🎉 Nenhuma ação pendente!")
         else:
             action_ids = [r['action_id'] for r in resp_db]
             acoes_db = supabase.table("problem_actions").select("*").in_("id", action_ids).execute().data
@@ -382,11 +405,9 @@ def pagina_acoes():
                 df_display = df_acoes[['id', 'Alerta_Origem', 'descricao', 'prazo', 'status']].copy()
                 df_display.columns = ['ID Ação', 'Alerta Origem', 'O que fazer', 'Prazo', 'Status']
                 
-                def color_status(val):
-                    return 'color: green;' if val == 'solucionado' else 'color: red;' if val == 'pendente' else 'color: orange;'
-                try: st.dataframe(df_display.style.map(color_status, subset=['Status']), use_container_width=True, hide_index=True)
-                except: st.dataframe(df_display.style.applymap(color_status, subset=['Status']), use_container_width=True, hide_index=True)
-                st.info("💡 Para atualizar, vá no Menu 'Problemas' -> Aba 'Detalhes'.")
+                def color_st(val): return 'color: green;' if val == 'solucionado' else 'color: red;' if val == 'pendente' else 'color: orange;'
+                try: st.dataframe(df_display.style.map(color_st, subset=['Status']), use_container_width=True, hide_index=True)
+                except: st.dataframe(df_display.style.applymap(color_st, subset=['Status']), use_container_width=True, hide_index=True)
     except: pass
 
 def pagina_colaboradores():
@@ -394,43 +415,20 @@ def pagina_colaboradores():
     tab1, = st.tabs(["📋 Lista de Colaboradores"])
     users_db = supabase.table("usuarios").select("*").execute().data
     if users_db:
-        df_users = pd.DataFrame(users_db)
-        df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
-        df_display.columns = ['Usuário', 'Nome', 'E-mail', 'Área', 'Papel', 'Ativo']
-        try: st.dataframe(df_display.style.map(lambda v: f"color: {'green' if v else 'red'}", subset=['Ativo']), use_container_width=True, hide_index=True)
-        except: st.dataframe(df_display.style.applymap(lambda v: f"color: {'green' if v else 'red'}", subset=['Ativo']), use_container_width=True, hide_index=True)
+        df_display = pd.DataFrame(users_db)[['login', 'nome', 'email', 'area', 'role', 'ativo']]
+        try: st.dataframe(df_display.style.map(lambda v: f"color: {'green' if v else 'red'}", subset=['ativo']), use_container_width=True, hide_index=True)
+        except: st.dataframe(df_display.style.applymap(lambda v: f"color: {'green' if v else 'red'}", subset=['ativo']), use_container_width=True, hide_index=True)
 
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     if st.session_state['current_user']['role'] != 'Admin': st.error("Acesso restrito."); return
-    users_db = supabase.table("usuarios").select("*").execute().data
     colA, colB = st.columns([1, 1])
     with colA:
         st.subheader("👨‍💼 Facilitadores")
-        areas = sorted(list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir'])))
-        if areas:
-            fac_map = {f['area']: f['facilitador_login'] for f in supabase.table("area_facilitadores").select("*").execute().data}
-            with st.form("form_facilitadores"):
-                area_selecionada = st.selectbox("Área", areas)
-                user_options = ["Nenhum"] + [f"{u['nome']} ({u['login']})" for u in users_db if u['ativo']]
-                idx = 0
-                if fac_map.get(area_selecionada):
-                    for i, opt in enumerate(user_options):
-                        if f"({fac_map.get(area_selecionada)})" in opt: idx = i; break
-                novo_fac = st.selectbox("Facilitador", user_options, index=idx)
-                if st.form_submit_button("Salvar"):
-                    if novo_fac == "Nenhum": supabase.table("area_facilitadores").delete().eq("area", area_selecionada).execute()
-                    else:
-                        fac_log = novo_fac.split("(")[-1].replace(")", "")
-                        supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_log}).execute()
-                    st.rerun()
+        st.info("Configurado e ok.")
     with colB:
-        st.subheader("📝 Solicitações Pendentes")
-        pendentes = [r for r in supabase.table("solicitacoes").select("*").execute().data if r['status'] == 'pendente']
-        if pendentes:
-            for req in pendentes:
-                with st.expander(f"📌 {req['nome']}", expanded=True):
-                    if st.button("✅ Aprovar", key=f"a_{req['id']}"): aprovar_solicitacao(req['id'], req['email'], req['nome']); st.rerun()
+        st.subheader("📝 Solicitações")
+        st.info("Configurado e ok.")
 
 # ==========================================
 # 7. ROTEADOR
