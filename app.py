@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import pandas as pd
+from supabase import create_client, Client
 
 # ==========================================
 # 1. CONFIGURAÇÃO DA PÁGINA (Identidade WEG)
@@ -13,56 +14,52 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. BANCO DE DADOS SIMULADO (Memória)
+# 2. CONEXÃO COM BANCO DE DADOS (SUPABASE)
 # ==========================================
-def inicializar_banco():
-    if 'db_users' not in st.session_state:
-        st.session_state['db_users'] = {
-            "roberto": {
-                "nome": "Roberto",
-                "email": "roberto@weg.net",
-                "senha": "WEG2026", 
-                "area": "Almoxarifado - WEN SZO",
-                "role": "Admin", 
-                "ativo": True
-            }
-        }
-    
-    if 'db_requests' not in st.session_state:
-        st.session_state['db_requests'] = []
-        
-    if 'request_counter' not in st.session_state:
-        st.session_state['request_counter'] = 1
+@st.cache_resource
+def init_connection() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-    if 'authenticated' not in st.session_state:
-        st.session_state['authenticated'] = False
-    if 'must_change_password' not in st.session_state:
-        st.session_state['must_change_password'] = False
-    if 'current_user' not in st.session_state:
-        st.session_state['current_user'] = None
+try:
+    supabase = init_connection()
+except Exception as e:
+    st.error("⚠️ Erro de conexão com o Banco de Dados. Verifique as configurações (Secrets).")
+    st.stop()
 
-inicializar_banco()
+# Controle de Sessão Atual
+if 'authenticated' not in st.session_state:
+    st.session_state['authenticated'] = False
+if 'must_change_password' not in st.session_state:
+    st.session_state['must_change_password'] = False
+if 'current_user' not in st.session_state:
+    st.session_state['current_user'] = None
 
 # ==========================================
-# 3. FUNÇÕES DE AUTENTICAÇÃO E ADMINISTRAÇÃO
+# 3. FUNÇÕES DE AUTENTICAÇÃO E BD
 # ==========================================
 def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
-    usuario = st.session_state['db_users'].get(usuario_login)
     
-    if usuario and usuario.get('ativo', True) and usuario.get('senha') == senha:
-        st.session_state['authenticated'] = True
-        st.session_state['current_user'] = {
-            "login": usuario_login,
-            "nome": usuario.get('nome', usuario_login),
-            "area": usuario.get('area', 'Não definida'),
-            "role": usuario.get('role', 'User')
-        }
-        if senha == "WEG2026":
-            st.session_state['must_change_password'] = True
-        else:
-            st.session_state['must_change_password'] = False
-        return True
+    # Busca o usuário no Banco de Dados
+    resposta = supabase.table("usuarios").select("*").eq("login", usuario_login).execute()
+    
+    if len(resposta.data) > 0:
+        usuario = resposta.data[0]
+        if usuario.get('ativo', True) and usuario.get('senha') == senha:
+            st.session_state['authenticated'] = True
+            st.session_state['current_user'] = {
+                "login": usuario['login'],
+                "nome": usuario['nome'],
+                "area": usuario['area'],
+                "role": usuario['role']
+            }
+            if senha == "WEG2026":
+                st.session_state['must_change_password'] = True
+            else:
+                st.session_state['must_change_password'] = False
+            return True
     return False
 
 def fazer_logout():
@@ -71,28 +68,28 @@ def fazer_logout():
     st.session_state['current_user'] = None
     st.rerun()
 
-def aprovar_solicitacao(req_id):
-    for req in st.session_state['db_requests']:
-        if req['id'] == req_id:
-            req['status'] = 'aprovado'
-            email_completo = req['email'].strip().lower()
-            login_extraido = email_completo.split('@')[0]
-            
-            st.session_state['db_users'][login_extraido] = {
-                "nome": req['nome'],
-                "email": email_completo,
-                "senha": "WEG2026",
-                "area": "A definir", 
-                "role": "User", 
-                "ativo": True
-            }
-            break
+def aprovar_solicitacao(req_id, req_email, req_nome):
+    # 1. Atualiza status no banco
+    supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
+    
+    # 2. Cria o novo usuário no banco
+    login_extraido = req_email.strip().lower().split('@')[0]
+    
+    # Verifica se já existe para não dar erro
+    check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
+    if len(check.data) == 0:
+        supabase.table("usuarios").insert({
+            "login": login_extraido,
+            "nome": req_nome,
+            "email": req_email,
+            "senha": "WEG2026",
+            "area": "A definir",
+            "role": "User",
+            "ativo": True
+        }).execute()
 
 def rejeitar_solicitacao(req_id):
-    for req in st.session_state['db_requests']:
-        if req['id'] == req_id:
-            req['status'] = 'rejeitado'
-            break
+    supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
 
 # ==========================================
 # 4. TELAS DE LOGIN, SOLICITAÇÃO E RESET
@@ -131,14 +128,13 @@ def render_login():
                 
                 if btn_solicitar:
                     if req_nome and req_email:
-                        st.session_state['db_requests'].append({
-                            "id": st.session_state['request_counter'],
+                        # Grava no banco de dados real
+                        supabase.table("solicitacoes").insert({
                             "nome": req_nome,
                             "email": req_email,
                             "status": "pendente",
                             "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-                        })
-                        st.session_state['request_counter'] += 1
+                        }).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else:
                         st.warning("Preencha todos os campos obrigatórios.")
@@ -151,9 +147,10 @@ def render_login():
                 
                 if btn_reset:
                     user_clean = reset_usuario.strip().lower()
-                    if user_clean in st.session_state['db_users']:
-                        st.session_state['db_users'][user_clean]['senha'] = "WEG2026"
-                        st.success(f"✅ Senha do usuário '{user_clean}' redefinida para **WEG2026**.")
+                    check = supabase.table("usuarios").select("login").eq("login", user_clean).execute()
+                    if len(check.data) > 0:
+                        supabase.table("usuarios").update({"senha": "WEG2026"}).eq("login", user_clean).execute()
+                        st.success(f"✅ Senha redefinida para **WEG2026**.")
                     else:
                         st.error("Usuário não encontrado no sistema.")
 
@@ -178,13 +175,15 @@ def render_trocar_senha():
                     st.error("As senhas não coincidem.")
                 else:
                     login_atual = st.session_state['current_user']['login']
-                    st.session_state['db_users'][login_atual]['senha'] = nova_senha
+                    # Atualiza a senha no banco real
+                    supabase.table("usuarios").update({"senha": nova_senha}).eq("login", login_atual).execute()
+                    
                     st.session_state['must_change_password'] = False
                     st.success("Senha alterada com sucesso!")
                     st.rerun()
 
 # ==========================================
-# 5. COMPONENTES DE LAYOUT (App Shell)
+# 5. COMPONENTES DE LAYOUT
 # ==========================================
 def render_header():
     col1, col2, col3 = st.columns([8, 1, 2])
@@ -222,15 +221,15 @@ def render_sidebar():
 # ==========================================
 def pagina_dashboard():
     st.header("Dashboard")
-    st.info("Visão geral dos alertas, problemas e KPIs. (Será construído no Step 11)")
+    st.info("Visão geral dos alertas, problemas e KPIs.")
 
 def pagina_problemas():
     st.header("Gestão de Problemas")
-    st.info("Abertura, listagem e detalhe de problemas e alertas. (Será construído no Step 7)")
+    st.info("Abertura e listagem de problemas.")
 
 def pagina_acoes():
     st.header("Minhas Ações Corretivas")
-    st.info("Lista de ações onde você é o responsável. (Será construído no Step 9)")
+    st.info("Lista de ações onde você é o responsável.")
 
 def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores")
@@ -242,22 +241,12 @@ def pagina_colaboradores():
     else:
         tab1, = st.tabs(["📋 Lista de Colaboradores"])
     
-    # ABA 1: LISTA (Visível para todos)
+    # Busca usuários reais do banco
+    users_db = supabase.table("usuarios").select("*").execute().data
+    
     with tab1:
-        lista_usuarios = []
-        for login, dados in st.session_state['db_users'].items():
-            u = dados.copy()
-            u['login'] = login
-            u['email'] = u.get('email', f"{login}@weg.net")
-            u['ativo'] = u.get('ativo', True)
-            u['role'] = u.get('role', 'User')
-            u['area'] = u.get('area', 'Não definida')
-            u['nome'] = u.get('nome', login)
-            lista_usuarios.append(u)
-            
-        df_users = pd.DataFrame(lista_usuarios)
-        
-        if not df_users.empty:
+        if users_db:
+            df_users = pd.DataFrame(users_db)
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
             df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
             
@@ -267,22 +256,18 @@ def pagina_colaboradores():
                     return f'color: {color}; font-weight: bold;'
                 return ''
             
-            # CORREÇÃO DO PANDAS: Usando .map() em vez de .applymap()
             try:
                 tabela_estilizada = df_display.style.map(colorir_ativo, subset=['Status Ativo'])
             except AttributeError:
-                # Caso rode num Pandas mais antigo que não aceita map
                 tabela_estilizada = df_display.style.applymap(colorir_ativo, subset=['Status Ativo'])
                 
             st.dataframe(tabela_estilizada, use_container_width=True, hide_index=True)
         else:
-            st.warning("Nenhum usuário cadastrado.")
+            st.warning("Nenhum usuário encontrado.")
 
-    # ABAS RESTRITAS PARA ADMIN
     if is_admin:
-        # ABA 2: ADICIONAR NOVO
         with tab2:
-            st.markdown("Adicione um colaborador manualmente ao sistema. A senha inicial será `WEG2026`.")
+            st.markdown("Adicione um colaborador manualmente ao sistema.")
             with st.form("form_add_colab"):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -292,122 +277,106 @@ def pagina_colaboradores():
                     novo_area = st.text_input("Área / Setor*")
                     novo_papel = st.selectbox("Nível de Acesso*", ["User", "Facilitador", "Admin"])
                 
-                btn_add = st.form_submit_button("Salvar Colaborador")
-                if btn_add:
+                if st.form_submit_button("Salvar Colaborador"):
                     if novo_nome and novo_email and novo_area:
                         novo_login = novo_email.strip().lower().split('@')[0]
-                        if novo_login in st.session_state['db_users']:
-                            st.error(f"O usuário '{novo_login}' já existe no sistema!")
+                        check = supabase.table("usuarios").select("login").eq("login", novo_login).execute()
+                        if len(check.data) > 0:
+                            st.error(f"O usuário '{novo_login}' já existe no BD!")
                         else:
-                            st.session_state['db_users'][novo_login] = {
+                            supabase.table("usuarios").insert({
+                                "login": novo_login,
                                 "nome": novo_nome,
                                 "email": novo_email,
                                 "senha": "WEG2026",
                                 "area": novo_area,
                                 "role": novo_papel,
                                 "ativo": True
-                            }
-                            st.success(f"Colaborador {novo_nome} adicionado com sucesso! Atualize a página.")
+                            }).execute()
+                            st.success("Colaborador adicionado com sucesso!")
                     else:
                         st.warning("Preencha todos os campos obrigatórios.")
                         
-        # ABA 3: EDITAR / DESATIVAR
         with tab3:
-            st.markdown("Selecione um usuário abaixo para editar suas informações ou desativar o seu acesso.")
-            
-            logins_disponiveis = list(st.session_state['db_users'].keys())
-            usuario_selecionado = st.selectbox("Selecione o Usuário:", logins_disponiveis)
+            logins = [u['login'] for u in users_db]
+            usuario_selecionado = st.selectbox("Selecione o Usuário:", logins)
             
             if usuario_selecionado:
-                user_data = st.session_state['db_users'][usuario_selecionado]
-                
-                with st.form("form_edit_colab"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        edit_nome = st.text_input("Nome Completo", value=user_data.get('nome', ''))
-                        edit_email = st.text_input("E-mail", value=user_data.get('email', f"{usuario_selecionado}@weg.net"))
-                        edit_area = st.text_input("Área / Setor", value=user_data.get('area', ''))
-                    with col2:
-                        roles = ["User", "Facilitador", "Admin"]
-                        current_role = user_data.get('role', 'User')
-                        role_index = roles.index(current_role) if current_role in roles else 0
+                user_data = next((u for u in users_db if u['login'] == usuario_selecionado), None)
+                if user_data:
+                    with st.form("form_edit_colab"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            edit_nome = st.text_input("Nome", value=user_data['nome'])
+                            edit_email = st.text_input("E-mail", value=user_data['email'])
+                            edit_area = st.text_input("Área", value=user_data['area'])
+                        with col2:
+                            roles = ["User", "Facilitador", "Admin"]
+                            role_index = roles.index(user_data['role']) if user_data['role'] in roles else 0
+                            edit_papel = st.selectbox("Nível de Acesso", roles, index=role_index)
+                            edit_ativo = st.checkbox("Colaborador Ativo", value=user_data['ativo'])
                         
-                        edit_papel = st.selectbox("Nível de Acesso", roles, index=role_index)
-                        edit_ativo = st.checkbox("Colaborador Ativo (Acesso Liberado)", value=user_data.get('ativo', True))
-                    
-                    st.info("Nota: A senha do usuário não pode ser alterada aqui. Caso ele esqueça, peça para usar a aba 'Esqueci a Senha' no login.")
-                    
-                    btn_edit = st.form_submit_button("Salvar Alterações")
-                    if btn_edit:
-                        if usuario_selecionado == st.session_state['current_user']['login'] and (not edit_ativo or edit_papel != "Admin"):
-                            st.error("Segurança: Você não pode desativar seu próprio usuário ou remover seu status de Admin.")
-                        else:
-                            st.session_state['db_users'][usuario_selecionado].update({
-                                "nome": edit_nome,
-                                "email": edit_email,
-                                "area": edit_area,
-                                "role": edit_papel,
-                                "ativo": edit_ativo
-                            })
-                            st.success(f"Dados de '{usuario_selecionado}' atualizados com sucesso! Atualize a página.")
+                        if st.form_submit_button("Salvar Alterações"):
+                            if usuario_selecionado == st.session_state['current_user']['login'] and (not edit_ativo or edit_papel != "Admin"):
+                                st.error("Segurança: Você não pode remover seu próprio acesso.")
+                            else:
+                                supabase.table("usuarios").update({
+                                    "nome": edit_nome,
+                                    "email": edit_email,
+                                    "area": edit_area,
+                                    "role": edit_papel,
+                                    "ativo": edit_ativo
+                                }).eq("login", usuario_selecionado).execute()
+                                st.success("Atualizado com sucesso!")
 
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     
     if st.session_state['current_user']['role'] != 'Admin':
-        st.error("Acesso restrito: Somente administradores podem acessar esta página.")
+        st.error("Acesso restrito.")
         return
         
-    st.markdown("Bem-vindo ao painel de gestão de acessos e configurações.")
-    
     st.subheader("📝 Solicitações de Acesso (Pendentes)")
-    pendentes = [req for req in st.session_state['db_requests'] if req['status'] == 'pendente']
+    
+    reqs_db = supabase.table("solicitacoes").select("*").execute().data
+    pendentes = [r for r in reqs_db if r['status'] == 'pendente']
     
     if not pendentes:
-        st.success("Nenhuma solicitação de acesso pendente no momento.")
+        st.success("Nenhuma solicitação de acesso pendente.")
     else:
         for req in pendentes:
             with st.expander(f"📌 {req['nome']} - {req['email']}", expanded=True):
-                st.write(f"**Data da solicitação:** {req['data']}")
-                
+                st.write(f"Data: {req['data']}")
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     if st.button("✅ Aprovar", key=f"apr_{req['id']}", type="primary"):
-                        aprovar_solicitacao(req['id'])
-                        st.success(f"Aprovado! Vá em 'Colaboradores' para editar a área se desejar.")
+                        aprovar_solicitacao(req['id'], req['email'], req['nome'])
+                        st.success("Aprovado! Atualize a página.")
                         st.rerun()
                 with col2:
                     if st.button("❌ Rejeitar", key=f"rej_{req['id']}"):
                         rejeitar_solicitacao(req['id'])
-                        st.warning(f"Rejeitado! Atualize a página.")
+                        st.warning("Rejeitado! Atualize a página.")
                         st.rerun()
                         
     st.markdown("---")
-    
     st.subheader("📜 Histórico de Solicitações")
-    historico = [req for req in st.session_state['db_requests'] if req['status'] != 'pendente']
+    historico = [r for r in reqs_db if r['status'] != 'pendente']
     
     if historico:
-        df_hist = pd.DataFrame(historico)
-        df_hist = df_hist[['nome', 'email', 'status', 'data']]
+        df_hist = pd.DataFrame(historico)[['nome', 'email', 'status', 'data']]
         df_hist.columns = ['Nome', 'E-mail', 'Status', 'Data']
-        
         def colorir_status(val):
-            color = 'green' if val == 'aprovado' else 'red'
-            return f'color: {color}; font-weight: bold;'
-            
-        # CORREÇÃO DO PANDAS AQUI TAMBÉM
+            return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
         try:
-            hist_estilizado = df_hist.style.map(colorir_status, subset=['Status'])
-        except AttributeError:
-            hist_estilizado = df_hist.style.applymap(colorir_status, subset=['Status'])
-            
-        st.dataframe(hist_estilizado, use_container_width=True, hide_index=True)
+            st.dataframe(df_hist.style.map(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
+        except:
+            st.dataframe(df_hist.style.applymap(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhum histórico disponível.")
+        st.info("Nenhum histórico.")
 
 # ==========================================
-# 7. CONTROLADOR PRINCIPAL (ROTEADOR)
+# 7. ROTEADOR
 # ==========================================
 def main():
     if not st.session_state['authenticated']:
@@ -417,17 +386,11 @@ def main():
     else:
         render_header()
         pagina_atual = render_sidebar()
-        
-        if "Dashboard" in pagina_atual:
-            pagina_dashboard()
-        elif "Problemas" in pagina_atual:
-            pagina_problemas()
-        elif "Ações" in pagina_atual:
-            pagina_acoes()
-        elif "Colaboradores" in pagina_atual:
-            pagina_colaboradores()
-        elif "Administração" in pagina_atual:
-            pagina_administracao()
+        if "Dashboard" in pagina_atual: pagina_dashboard()
+        elif "Problemas" in pagina_atual: pagina_problemas()
+        elif "Ações" in pagina_atual: pagina_acoes()
+        elif "Colaboradores" in pagina_atual: pagina_colaboradores()
+        elif "Administração" in pagina_atual: pagina_administracao()
 
 if __name__ == "__main__":
     main()
