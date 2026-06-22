@@ -15,7 +15,7 @@ st.set_page_config(
 # 2. BANCO DE DADOS SIMULADO (Memória)
 # ==========================================
 def inicializar_banco():
-    # Tabela de Usuários (Login apenas com o usuário, sem @weg.net)
+    # Tabela de Usuários
     if 'db_users' not in st.session_state:
         st.session_state['db_users'] = {
             "roberto": {
@@ -45,7 +45,6 @@ inicializar_banco()
 # 3. FUNÇÕES DE AUTENTICAÇÃO
 # ==========================================
 def fazer_login(usuario_login, senha):
-    # Força minúsculo para evitar erro de digitação (Roberto vs roberto)
     usuario_login = usuario_login.strip().lower() 
     usuario = st.session_state['db_users'].get(usuario_login)
     
@@ -72,7 +71,7 @@ def fazer_logout():
     st.rerun()
 
 # ==========================================
-# 4. TELAS DE LOGIN E TROCA DE SENHA
+# 4. TELAS DE LOGIN, SOLICITAÇÃO E RESET
 # ==========================================
 def render_login():
     # Centralizando a tela de login
@@ -87,8 +86,8 @@ def render_login():
             
         st.markdown("<h2 style='color: #00579D;'>Central de Alertas</h2>", unsafe_allow_html=True)
         
-        # Abas de Login e Solicitação de Acesso
-        aba_login, aba_solicitar = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso"])
+        # Abas da tela inicial atualizadas
+        aba_login, aba_solicitar, aba_reset = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso", "🔑 Esqueci a Senha"])
         
         # ABA 1: ENTRAR
         with aba_login:
@@ -114,7 +113,6 @@ def render_login():
                 
                 if btn_solicitar:
                     if req_nome and req_usuario and req_area:
-                        # Grava na "tabela" de requests pendentes
                         st.session_state['db_requests'].append({
                             "nome": req_nome,
                             "login": req_usuario.strip().lower(),
@@ -126,6 +124,22 @@ def render_login():
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else:
                         st.warning("Preencha todos os campos obrigatórios.")
+                        
+        # ABA 3: ESQUECI A SENHA (RESET)
+        with aba_reset:
+            st.info("Informe seu usuário. Sua senha será redefinida para a padrão e você deverá trocá-la no próximo acesso.")
+            with st.form("form_reset"):
+                reset_usuario = st.text_input("Usuário WEG")
+                btn_reset = st.form_submit_button("Redefinir Senha", use_container_width=True)
+                
+                if btn_reset:
+                    user_clean = reset_usuario.strip().lower()
+                    if user_clean in st.session_state['db_users']:
+                        # Reseta a senha para o padrão
+                        st.session_state['db_users'][user_clean]['senha'] = "WEG2026"
+                        st.success(f"✅ Senha do usuário '{user_clean}' redefinida para **WEG2026**.")
+                    else:
+                        st.error("Usuário não encontrado no sistema.")
 
 def render_trocar_senha():
     col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -147,10 +161,8 @@ def render_trocar_senha():
                 elif nova_senha != confirma_senha:
                     st.error("As senhas não coincidem.")
                 else:
-                    # Atualiza no "Banco de Dados"
                     login_atual = st.session_state['current_user']['login']
                     st.session_state['db_users'][login_atual]['senha'] = nova_senha
-                    # Libera o acesso
                     st.session_state['must_change_password'] = False
                     st.success("Senha alterada com sucesso!")
                     st.rerun()
@@ -222,15 +234,10 @@ def pagina_administracao():
 # 7. CONTROLADOR PRINCIPAL (ROTEADOR)
 # ==========================================
 def main():
-    # 1. Se não estiver autenticado, mostra a tela de Login
     if not st.session_state['authenticated']:
         render_login()
-    
-    # 2. Se estiver autenticado mas precisa trocar a senha
     elif st.session_state['must_change_password']:
         render_trocar_senha()
-        
-    # 3. Se estiver tudo OK, mostra o sistema
     else:
         render_header()
         pagina_atual = render_sidebar()
