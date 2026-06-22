@@ -210,8 +210,6 @@ def render_header():
                     txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
                     if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                         supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
-                        
-                        # ROTEAMENTO PROFUNDO
                         if n['link'].startswith("Problemas"):
                             partes = n['link'].split("|")
                             if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
@@ -246,7 +244,7 @@ def render_sidebar():
     return menu_selecionado
 
 # ==========================================
-# 6. PÁGINAS DO SISTEMA COMPLETAS
+# 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
     st.header("📊 Dashboard de Performance")
@@ -283,7 +281,6 @@ def pagina_dashboard():
     st.markdown("---")
     
     colA, colB = st.columns([1, 1])
-    
     with colA:
         st.subheader("📈 Alertas por Área")
         df_area = df['area'].value_counts().reset_index()
@@ -293,7 +290,6 @@ def pagina_dashboard():
     with colB:
         st.subheader("🔥 Top Alertas Críticos")
         df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
-        
         if not df_criticos.empty:
             peso_prio = {"Urgente": 1, "Normal": 2, "Baixo": 3}
             df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
@@ -309,8 +305,7 @@ def pagina_dashboard():
                         if st.button("Acessar", key=f"dash_prob_{row['id']}"):
                             teletransportar_para_alerta(row['id'])
                     st.divider()
-        else:
-            st.success("Tudo sob controle! Nenhum alerta crítico pendente.")
+        else: st.success("Tudo sob controle! Nenhum alerta crítico pendente.")
 
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
@@ -322,7 +317,6 @@ def pagina_problemas():
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
-    # === MENU DA ABA PROBLEMAS ===
     opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes e Ações", "💬 Fórum de Discussão"]
     idx_sub = opcoes_sub.index(st.session_state['sub_menu_prob']) if st.session_state['sub_menu_prob'] in opcoes_sub else 0
     
@@ -354,8 +348,8 @@ def pagina_problemas():
                         id_rapido = st.selectbox("ID do Alerta:", opcoes_ids_rapido)
                         if st.button("Abrir Detalhe", type="primary", use_container_width=True):
                             teletransportar_para_alerta(int(id_rapido))
-                else: st.info("Nenhum alerta encontrado.")
-            else: st.info("Nenhum problema cadastrado.")
+                else: st.info("Nenhum alerta encontrado com os filtros selecionados.")
+            else: st.info("Nenhum problema cadastrado no sistema.")
         except Exception as e: st.error(f"Erro ao carregar tabela: {str(e)}")
 
     elif aba_atual == "➕ Abrir Novo Alerta":
@@ -375,14 +369,12 @@ def pagina_problemas():
                     try:
                         res = supabase.table("problemas").insert({
                             "titulo": titulo, "descricao": descricao, "area": area_prob,
-                            "prioridade": prioridade, "status": "aberto",
-                            "criado_por": st.session_state['current_user']['login'],
+                            "prioridade": prioridade, "status": "aberto", "criado_por": st.session_state['current_user']['login'],
                             "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"),
-                            "anexo": nome_anexo
+                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"), "anexo": nome_anexo
                         }).execute()
                         st.success("✅ Alerta registrado com sucesso!")
-                        teletransportar_para_alerta(res.data[0]['id']) # Pula direto pro alerta criado
+                        teletransportar_para_alerta(res.data[0]['id'])
                     except Exception as e: st.error(f"Erro no BD: {str(e)}")
                 else: st.warning("Título e Descrição são obrigatórios.")
 
@@ -408,8 +400,8 @@ def pagina_problemas():
                     if alerta:
                         st.markdown(f"### #{alerta['id']} - {alerta['titulo']}")
                         
-                        # Botão rápido para o fórum deste alerta
-                        if st.button("💬 Abrir Fórum deste Alerta"):
+                        # NOVIDADE: Botão de teletransporte pro Chat do Alerta
+                        if st.button("💬 Ver Fórum de Discussão deste Alerta"):
                             teletransportar_para_forum(alerta['id'])
                             
                         c1, c2, c3, c4 = st.columns(4)
@@ -423,7 +415,6 @@ def pagina_problemas():
                         if alerta['anexo']: st.markdown(f"📎 **Anexo:** `{alerta['anexo']}`")
                         st.markdown("---")
                         
-                        # --- ANÁLISE E APROVAÇÃO ---
                         if alerta['status'] == 'aberto':
                             st.markdown("### ⚙️ Análise do Facilitador")
                             is_admin = st.session_state['current_user']['role'] == 'Admin'
@@ -433,8 +424,8 @@ def pagina_problemas():
                             fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
                             is_facilitator = st.session_state['current_user']['login'] == fac_area
                             
-                            if is_creator and not is_admin: st.warning("⚠️ Regra: Você não pode aprovar um alerta criado por você mesmo.")
-                            elif not is_admin and not is_facilitator: st.warning("⚠️ Permissão: Apenas o Admin ou o Facilitador da área podem aprovar.")
+                            if is_creator and not is_admin: st.warning("⚠️ Você não pode aprovar seu próprio alerta.")
+                            elif not is_admin and not is_facilitator: st.warning("⚠️ Apenas Admin ou Facilitador da área podem aprovar.")
                             else:
                                 c_apr, c_rej = st.columns(2)
                                 with c_apr:
@@ -456,7 +447,6 @@ def pagina_problemas():
                             just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
                             st.error(f"🚨 **ALERTA REJEITADO (Fechado)**\n\n**Motivo:** {just_db[-1]['motivo'] if just_db else 'Sem motivo registrado.'}")
                             
-                        # --- PLANO DE AÇÕES ---
                         elif alerta['status'] in ['aprovado', 'solucionado']:
                             st.markdown("### ✅ Plano de Ações Corretivas")
                             acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
@@ -499,7 +489,7 @@ def pagina_problemas():
                                         st.error("Preencha descrição e escolha responsáveis.")
         except Exception as e: st.error(f"Erro na exibição dos detalhes: {e}")
 
-    # ABA 4: FÓRUM (NOVA)
+    # === ABA 4: FÓRUM COM CITAÇÃO TIPO WHATSAPP ===
     elif aba_atual == "💬 Fórum de Discussão":
         try:
             problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
@@ -524,6 +514,10 @@ def pagina_problemas():
                         st.caption("Deixe seu pitaco, sugestão alternativa ou dúvida. Toda ajuda coletiva é bem-vinda!")
                         st.markdown("---")
                         
+                        # Controle de Citação (Responder)
+                        reply_key = f"reply_focus_{alerta['id']}"
+                        if reply_key not in st.session_state: st.session_state[reply_key] = None
+
                         comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
                         
                         if comments_db:
@@ -531,39 +525,57 @@ def pagina_problemas():
                                 autor_nome = next((u['nome'] for u in users_db if u['login'] == c['autor']), c['autor'])
                                 data_f = c['criado_em'][:16].replace('T', ' ')
                                 
-                                # Layout nativo de Chat do Streamlit
-                                if c['autor'] == st.session_state['current_user']['login']:
-                                    with st.chat_message("user", avatar="🧑‍💻"):
-                                        st.markdown(f"**Você** *(em {data_f})*")
-                                        st.write(c['texto'])
-                                else:
-                                    with st.chat_message("assistant", avatar="💡"):
-                                        st.markdown(f"**{autor_nome}** *(em {data_f})*")
-                                        st.write(c['texto'])
+                                is_me = c['autor'] == st.session_state['current_user']['login']
+                                avatar_icon = "🧑‍💻" if is_me else "💡"
+                                nome_display = "Você" if is_me else autor_nome
+                                
+                                with st.chat_message("user" if is_me else "assistant", avatar=avatar_icon):
+                                    st.markdown(f"**{nome_display}** *(em {data_f})*")
+                                    st.write(c['texto'])
+                                    
+                                    # Botão Responder minúsculo debaixo do texto
+                                    if st.button("↩️ Responder", key=f"btn_rep_{c['id']}"):
+                                        st.session_state[reply_key] = {"nome": nome_display, "texto": c['texto']}
+                                        st.rerun()
                         else:
                             st.info("Nenhum insight ainda. Seja o primeiro a dar um pitaco!")
                             
-                        st.write("<br>", unsafe_allow_html=True)
+                        st.write("<br><br>", unsafe_allow_html=True)
                         
-                        # Input de Novo Comentário
-                        novo_comentario = st.text_input("Escreva seu insight aqui...", key=f"chat_input_{alerta['id']}")
-                        if st.button("Enviar Mensagem"):
-                            if novo_comentario:
-                                supabase.table("problem_comments").insert({
-                                    "problem_id": alerta['id'],
-                                    "autor": st.session_state['current_user']['login'],
-                                    "texto": novo_comentario,
-                                    "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                }).execute()
-                                
-                                # Notifica o autor do problema que alguém ajudou
-                                if st.session_state['current_user']['login'] != alerta['criado_por']:
-                                    nome_ajudante = st.session_state['current_user']['nome']
-                                    enviar_notificacao(alerta['criado_por'], "Novo Insight no seu Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Fórum|{alerta['id']}")
-                                    
+                        # Input de Novo Comentário (com formulário pra aceitar "Enter")
+                        if st.session_state[reply_key]:
+                            rep = st.session_state[reply_key]
+                            st.info(f"↩️ **Respondendo a {rep['nome']}:** _{rep['texto'][:50]}..._")
+                            if st.button("❌ Cancelar Resposta", key=f"canc_rep_{alerta['id']}"):
+                                st.session_state[reply_key] = None
                                 st.rerun()
-                            else:
-                                st.warning("Escreva alguma coisa antes de enviar.")
+
+                        with st.form(key=f"form_chat_{alerta['id']}", clear_on_submit=True):
+                            novo_comentario = st.text_input("Escreva seu insight aqui (Aperte Enter para enviar)...")
+                            if st.form_submit_button("Enviar Mensagem"):
+                                if novo_comentario:
+                                    texto_final = novo_comentario
+                                    # Se estiver respondendo alguém, embute a citação no texto!
+                                    if st.session_state[reply_key]:
+                                        rep = st.session_state[reply_key]
+                                        texto_final = f"> **Em resposta a {rep['nome']}:**\n> _{rep['texto']}_\n\n{novo_comentario}"
+                                        
+                                    supabase.table("problem_comments").insert({
+                                        "problem_id": alerta['id'],
+                                        "autor": st.session_state['current_user']['login'],
+                                        "texto": texto_final,
+                                        "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    }).execute()
+                                    
+                                    st.session_state[reply_key] = None # Limpa a resposta após enviar
+                                    
+                                    if st.session_state['current_user']['login'] != alerta['criado_por']:
+                                        nome_ajudante = st.session_state['current_user']['nome']
+                                        enviar_notificacao(alerta['criado_por'], "Novo Insight no seu Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Fórum|{alerta['id']}")
+                                        
+                                    st.rerun()
+                                else:
+                                    st.warning("Escreva alguma coisa antes de enviar.")
         except Exception as e:
             st.error(f"Erro ao carregar o chat: {e}")
 
