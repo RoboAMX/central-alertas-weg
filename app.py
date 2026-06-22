@@ -42,10 +42,9 @@ if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 
 # --- SISTEMA DE TELETRANSPORTE ---
 def teletransportar_para_alerta(alerta_id):
-    """Muda as variáveis de sessão para forçar o Streamlit a renderizar a tela de detalhes no alerta específico"""
     st.session_state['alerta_focus'] = alerta_id
     st.session_state['sub_menu_prob'] = "🔍 Detalhes do Alerta"
-    st.session_state['menu_index'] = 1  # Índice 1 é a aba de Problemas no menu lateral
+    st.session_state['menu_index'] = 1  
     st.rerun()
 
 # ==========================================
@@ -205,8 +204,6 @@ def render_header():
                     txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
                     if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                         supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
-                        
-                        # ROTEAMENTO PROFUNDO VIA NOTIFICAÇÃO
                         if n['link'].startswith("Problemas"):
                             partes = n['link'].split("|")
                             if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
@@ -227,9 +224,8 @@ def render_sidebar():
     st.sidebar.markdown("### 🚨 Navegação")
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
     
-    # Atualiza a sessão para o Streamlit renderizar o componente certo sem dar erro de Key
-    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'])
-    st.session_state['menu_index'] = opcoes_menu.index(menu_selecionado)
+    def update_menu(): st.session_state['menu_index'] = opcoes_menu.index(st.session_state['_menu_radio'])
+    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'], key='_menu_radio', on_change=update_menu)
     
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
@@ -237,7 +233,7 @@ def render_sidebar():
     return menu_selecionado
 
 # ==========================================
-# 6. PÁGINAS DO SISTEMA COMPLETAS
+# 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
     st.header("📊 Dashboard de Performance")
@@ -289,7 +285,6 @@ def pagina_dashboard():
             df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
             df_criticos = df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10)
             
-            # Novo layout iterativo para os críticos (Permite o teletransporte)
             for _, row in df_criticos.iterrows():
                 with st.container():
                     st.markdown(f"**#{row['id']} - {row['titulo']}**")
@@ -313,12 +308,11 @@ def pagina_problemas():
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
-    # REMOVIDO st.tabs -> SUBSTITUÍDO POR st.radio PARA PERMITIR ROTEAMENTO
     opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes do Alerta"]
     idx_sub = opcoes_sub.index(st.session_state['sub_menu_prob'])
     
     aba_atual = st.radio("Selecione a visualização:", opcoes_sub, index=idx_sub, horizontal=True)
-    st.session_state['sub_menu_prob'] = aba_atual  # Salva a escolha atual na memória
+    st.session_state['sub_menu_prob'] = aba_atual  
     st.markdown("---")
     
     if aba_atual == "📋 Listagem de Alertas":
@@ -341,7 +335,6 @@ def pagina_problemas():
                     st.markdown("### 🚀 Acesso Rápido")
                     col1, col2 = st.columns([1, 4])
                     with col1:
-                        # Roteador rápido via Listagem
                         opcoes_ids_rapido = [str(p['id']) for p in problemas_db]
                         id_rapido = st.selectbox("ID do Alerta:", opcoes_ids_rapido)
                         if st.button("Abrir Detalhe", type="primary", use_container_width=True):
@@ -372,7 +365,7 @@ def pagina_problemas():
                             "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"), "anexo": nome_anexo
                         }).execute()
                         st.success("✅ Alerta registrado com sucesso!")
-                        st.session_state['sub_menu_prob'] = "📋 Listagem de Alertas" # Volta pra lista
+                        st.session_state['sub_menu_prob'] = "📋 Listagem de Alertas"
                         st.rerun()
                     except Exception as e: st.error(f"Erro no BD: {str(e)}")
                 else: st.warning("Título e Descrição são obrigatórios.")
@@ -382,16 +375,12 @@ def pagina_problemas():
             problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
             if problemas_db:
                 opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
-                
-                # Inteligência que localiza o ID selecionado via Teletransporte
                 idx_padrao = 0
                 if st.session_state['alerta_focus']:
                     for i, opt in enumerate(opcoes_ids):
                         if opt.startswith(str(st.session_state['alerta_focus']) + " -"):
-                            idx_padrao = i
-                            break
+                            idx_padrao = i; break
                             
-                # Callback para limpar o foco se o usuário trocar a combo manualmente
                 def limpa_foco(): st.session_state['alerta_focus'] = None
 
                 id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", opcoes_ids, index=idx_padrao, key='_sel_alerta', on_change=limpa_foco)
@@ -453,7 +442,7 @@ def pagina_problemas():
                             
                             if acoes_db:
                                 for acao in acoes_db:
-                                    with st.expander(f"Ação #{acao['id']}: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
+                                    with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
                                         resp_db = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data
                                         logins_resp = [r['colaborador_login'] for r in resp_db]
                                         st.write(f"**Responsáveis:** {', '.join([u['nome'] for u in users_db if u['login'] in logins_resp])}")
@@ -485,7 +474,59 @@ def pagina_problemas():
                                             supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
                                             enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
                                         st.success("Ação salva!"); st.rerun()
-                                    else: st.error("Preencha descrição e escolha responsáveis.")
+                                    else:
+                                        st.error("Preencha descrição e escolha responsáveis.")
+
+                        # ==================================================
+                        # NOVO PASSO: FÓRUM E CHAT DE INSIGHTS E PITACOS
+                        # ==================================================
+                        st.markdown("---")
+                        st.markdown("### 💬 Fórum e Discussão (Insights)")
+                        st.caption("Deixe seu pitaco, sugestão alternativa ou dúvida sobre este alerta. Toda ajuda coletiva é bem-vinda!")
+                        
+                        try:
+                            comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
+                            if comments_db:
+                                for c in comments_db:
+                                    autor_nome = next((u['nome'] for u in users_db if u['login'] == c['autor']), c['autor'])
+                                    data_f = c['criado_em'][:16].replace('T', ' ')
+                                    
+                                    # Usa o layout de chat nativo do Streamlit
+                                    if c['autor'] == st.session_state['current_user']['login']:
+                                        with st.chat_message("user", avatar="🧑‍💻"):
+                                            st.markdown(f"**Você** *(em {data_f})*")
+                                            st.write(c['texto'])
+                                    else:
+                                        with st.chat_message("assistant", avatar="💡"):
+                                            st.markdown(f"**{autor_nome}** *(em {data_f})*")
+                                            st.write(c['texto'])
+                            else:
+                                st.info("Nenhum insight ainda. Seja o primeiro a dar um pitaco!")
+                                
+                            st.write("<br>", unsafe_allow_html=True)
+                            
+                            # Input de Novo Comentário
+                            novo_comentario = st.text_input("Escreva seu insight aqui...", key=f"chat_input_{alerta['id']}")
+                            if st.button("Enviar Mensagem"):
+                                if novo_comentario:
+                                    supabase.table("problem_comments").insert({
+                                        "problem_id": alerta['id'],
+                                        "autor": st.session_state['current_user']['login'],
+                                        "texto": novo_comentario,
+                                        "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    }).execute()
+                                    
+                                    # Notifica o autor do problema que alguém ajudou (se não for ele mesmo)
+                                    if st.session_state['current_user']['login'] != alerta['criado_por']:
+                                        nome_ajudante = st.session_state['current_user']['nome']
+                                        enviar_notificacao(alerta['criado_por'], "Novo Insight no seu Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Problemas|{alerta['id']}")
+                                        
+                                    st.rerun()
+                                else:
+                                    st.warning("Escreva alguma coisa antes de enviar.")
+                        except Exception as e:
+                            st.error("Erro ao carregar o chat. Verifique se a tabela 'problem_comments' foi criada corretamente no Supabase.")
+
         except Exception as e: st.error(f"Erro na exibição dos detalhes: {e}")
 
 def pagina_acoes():
@@ -500,7 +541,6 @@ def pagina_acoes():
             action_ids = [r['action_id'] for r in resp_db]
             acoes_db = supabase.table("problem_actions").select("*").in_("id", action_ids).execute().data
             if acoes_db:
-                # Transforma a tabela chata em Cards Interativos com Botão de Teletransporte
                 probs_db = supabase.table("problemas").select("id, titulo").execute().data
                 prob_map = {p['id']: p['titulo'] for p in probs_db}
                 
@@ -521,7 +561,6 @@ def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores e Acessos")
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
-    # Submenu inteligente em vez de Tabs
     opcoes_sub = ["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"] if is_admin else ["📋 Lista de Colaboradores"]
     aba_atual = st.radio("Opções:", opcoes_sub, horizontal=True)
     st.markdown("---")
@@ -638,7 +677,8 @@ def pagina_administracao():
         st.subheader("📝 Solicitações de Acesso Pendentes")
         reqs_db = supabase.table("solicitacoes").select("*").execute().data
         pendentes = [r for r in reqs_db if r['status'] == 'pendente']
-        if not pendentes: st.success("Nenhuma solicitação pendente no momento.")
+        if not pendentes:
+            st.success("Nenhuma solicitação pendente no momento.")
         else:
             for req in pendentes:
                 with st.expander(f"📌 {req['nome']}", expanded=True):
@@ -658,7 +698,8 @@ def pagina_administracao():
             def colorir_status_req(val): return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
             try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
             except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
-        else: st.info("Nenhum histórico disponível.")
+        else:
+            st.info("Nenhum histórico disponível.")
 
         st.markdown("---")
         st.subheader("📧 Diagnóstico de E-mail")
