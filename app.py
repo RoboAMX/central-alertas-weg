@@ -15,10 +15,10 @@ st.set_page_config(
 # 2. BANCO DE DADOS SIMULADO (Memória)
 # ==========================================
 def inicializar_banco():
-    # Tabela de Usuários
+    # Tabela de Usuários (Login apenas com o usuário, sem @weg.net)
     if 'db_users' not in st.session_state:
         st.session_state['db_users'] = {
-            "roberto@weg.net": {
+            "roberto": {
                 "nome": "Roberto",
                 "senha": "WEG2026", # Senha padrão que força a troca
                 "area": "Almoxarifado - WEN SZO",
@@ -44,13 +44,15 @@ inicializar_banco()
 # ==========================================
 # 3. FUNÇÕES DE AUTENTICAÇÃO
 # ==========================================
-def fazer_login(email, senha):
-    usuario = st.session_state['db_users'].get(email)
+def fazer_login(usuario_login, senha):
+    # Força minúsculo para evitar erro de digitação (Roberto vs roberto)
+    usuario_login = usuario_login.strip().lower() 
+    usuario = st.session_state['db_users'].get(usuario_login)
     
     if usuario and usuario['ativo'] and usuario['senha'] == senha:
         st.session_state['authenticated'] = True
         st.session_state['current_user'] = {
-            "email": email,
+            "login": usuario_login,
             "nome": usuario['nome'],
             "area": usuario['area'],
             "role": usuario['role']
@@ -91,33 +93,31 @@ def render_login():
         # ABA 1: ENTRAR
         with aba_login:
             with st.form("form_login"):
-                email = st.text_input("E-mail corporativo (@weg.net)")
+                usuario_login = st.text_input("Usuário WEG")
                 senha = st.text_input("Senha", type="password")
                 btn_login = st.form_submit_button("Entrar", use_container_width=True)
                 
                 if btn_login:
-                    if fazer_login(email, senha):
+                    if fazer_login(usuario_login, senha):
                         st.rerun()
                     else:
-                        st.error("E-mail ou senha incorretos, ou usuário inativo.")
+                        st.error("Usuário ou senha incorretos, ou cadastro inativo.")
         
         # ABA 2: SOLICITAR ACESSO
         with aba_solicitar:
             with st.form("form_solicitacao"):
                 req_nome = st.text_input("Nome Completo")
-                req_email = st.text_input("E-mail (@weg.net)")
+                req_usuario = st.text_input("Usuário WEG pretendido")
                 req_area = st.text_input("Área/Setor")
                 req_motivo = st.text_area("Motivo da solicitação")
                 btn_solicitar = st.form_submit_button("Enviar Solicitação", use_container_width=True)
                 
                 if btn_solicitar:
-                    if "@weg.net" not in req_email:
-                        st.error("Por favor, utilize um e-mail válido da WEG (@weg.net).")
-                    elif req_nome and req_email and req_area:
+                    if req_nome and req_usuario and req_area:
                         # Grava na "tabela" de requests pendentes
                         st.session_state['db_requests'].append({
                             "nome": req_nome,
-                            "email": req_email,
+                            "login": req_usuario.strip().lower(),
                             "area": req_area,
                             "motivo": req_motivo,
                             "status": "pendente",
@@ -148,8 +148,8 @@ def render_trocar_senha():
                     st.error("As senhas não coincidem.")
                 else:
                     # Atualiza no "Banco de Dados"
-                    email_atual = st.session_state['current_user']['email']
-                    st.session_state['db_users'][email_atual]['senha'] = nova_senha
+                    login_atual = st.session_state['current_user']['login']
+                    st.session_state['db_users'][login_atual]['senha'] = nova_senha
                     # Libera o acesso
                     st.session_state['must_change_password'] = False
                     st.success("Senha alterada com sucesso!")
