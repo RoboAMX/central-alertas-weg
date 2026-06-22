@@ -31,11 +31,22 @@ except Exception as e:
     st.error("⚠️ Erro de conexão com o Banco de Dados. Verifique os Secrets.")
     st.stop()
 
+# Variáveis de Navegação e Sessão
 if 'authenticated' not in st.session_state: st.session_state['authenticated'] = False
 if 'must_change_password' not in st.session_state: st.session_state['must_change_password'] = False
 if 'current_user' not in st.session_state: st.session_state['current_user'] = None
 if 'menu_index' not in st.session_state: st.session_state['menu_index'] = 0
+if 'sub_menu_prob' not in st.session_state: st.session_state['sub_menu_prob'] = "📋 Listagem de Alertas"
+if 'alerta_focus' not in st.session_state: st.session_state['alerta_focus'] = None
 if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
+
+# --- SISTEMA DE TELETRANSPORTE ---
+def teletransportar_para_alerta(alerta_id):
+    """Muda as variáveis de sessão para forçar o Streamlit a renderizar a tela de detalhes no alerta específico"""
+    st.session_state['alerta_focus'] = alerta_id
+    st.session_state['sub_menu_prob'] = "🔍 Detalhes do Alerta"
+    st.session_state['menu_index'] = 1  # Índice 1 é a aba de Problemas no menu lateral
+    st.rerun()
 
 # ==========================================
 # 3. FUNÇÕES DE AUTENTICAÇÃO E LÓGICA CORE
@@ -43,7 +54,6 @@ if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
     resposta = supabase.table("usuarios").select("*").eq("login", usuario_login).execute()
-    
     if len(resposta.data) > 0:
         usuario = resposta.data[0]
         if usuario.get('ativo', True) and usuario.get('senha') == senha:
@@ -70,34 +80,18 @@ def enviar_email(destinatario, assunto, mensagem_html):
         remetente = st.secrets.get("EMAIL_SENDER", "")
         senha = st.secrets.get("EMAIL_PASSWORD", "")
         if not remetente or not senha: return
-            
         msg = MIMEMultipart()
-        msg['From'] = remetente
-        msg['To'] = destinatario
-        msg['Subject'] = assunto
-        
+        msg['From'] = remetente; msg['To'] = destinatario; msg['Subject'] = assunto
         html_completo = f"""
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
-            <div style="background-color: #00579D; padding: 20px; text-align: center; color: white;">
-                <h2 style="margin: 0;">Central de Alertas - WEG</h2>
-            </div>
-            <div style="padding: 20px; background-color: #f9f9f9;">
-                {mensagem_html}
-            </div>
-            <div style="background-color: #eee; padding: 10px; text-align: center; font-size: 12px; color: #666;">
-                Este é um e-mail automático. Por favor, não responda.
-            </div>
-        </div>
-        """
+            <div style="background-color: #00579D; padding: 20px; text-align: center; color: white;"><h2 style="margin: 0;">Central de Alertas - WEG</h2></div>
+            <div style="padding: 20px; background-color: #f9f9f9;">{mensagem_html}</div>
+            <div style="background-color: #eee; padding: 10px; text-align: center; font-size: 12px; color: #666;">Este é um e-mail automático. Não responda.</div>
+        </div>"""
         msg.attach(MIMEText(html_completo, 'html'))
-        
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(remetente, senha)
-        server.send_message(msg)
-        server.quit()
-    except Exception as e:
-        print(f"Erro Email: {e}")
+        server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(remetente, senha)
+        server.send_message(msg); server.quit()
+    except Exception as e: print(f"Erro Email: {e}")
 
 def enviar_notificacao(user_login, titulo, corpo, link=""):
     try:
@@ -114,10 +108,7 @@ def aprovar_solicitacao_acesso(req_id, req_email, req_nome):
     login_extraido = req_email.strip().lower().split('@')[0]
     check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
     if len(check.data) == 0:
-        supabase.table("usuarios").insert({
-            "login": login_extraido, "nome": req_nome, "email": req_email,
-            "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True
-        }).execute()
+        supabase.table("usuarios").insert({"login": login_extraido, "nome": req_nome, "email": req_email, "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True}).execute()
         enviar_email(req_email, "Acesso Aprovado", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Usuário: <b>{login_extraido}</b> | Senha: <b>WEG2026</b>")
 
 def rejeitar_solicitacao_acesso(req_id):
@@ -211,11 +202,18 @@ def render_header():
             else:
                 for n in notifs:
                     st.warning(f"**{n['titulo']}**\n\n{n['corpo']}")
-                    txt_btn = f"Ler e ir para {n['link']}" if n['link'] else "Marcar como Lida"
+                    txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
                     if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                         supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
-                        if n['link'] == "Problemas": st.session_state['menu_index'] = 1
-                        elif n['link'] == "Minhas Ações": st.session_state['menu_index'] = 2
+                        
+                        # ROTEAMENTO PROFUNDO VIA NOTIFICAÇÃO
+                        if n['link'].startswith("Problemas"):
+                            partes = n['link'].split("|")
+                            if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
+                            st.session_state['sub_menu_prob'] = "🔍 Detalhes do Alerta"
+                            st.session_state['menu_index'] = 1
+                        elif n['link'] == "Minhas Ações":
+                            st.session_state['menu_index'] = 2
                         st.rerun()
                         
     with col3: 
@@ -229,8 +227,9 @@ def render_sidebar():
     st.sidebar.markdown("### 🚨 Navegação")
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
     
-    def update_menu(): st.session_state['menu_index'] = opcoes_menu.index(st.session_state['_menu_radio'])
-    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'], key='_menu_radio', on_change=update_menu)
+    # Atualiza a sessão para o Streamlit renderizar o componente certo sem dar erro de Key
+    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'])
+    st.session_state['menu_index'] = opcoes_menu.index(menu_selecionado)
     
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
@@ -242,11 +241,9 @@ def render_sidebar():
 # ==========================================
 def pagina_dashboard():
     st.header("📊 Dashboard de Performance")
-    
     user_role = st.session_state['current_user']['role']
     user_area = st.session_state['current_user']['area']
     
-    # 1. Filtro RLS Lógico (Visão do Dashboard)
     if user_role == 'Admin':
         st.markdown("*Visão Global (Modo Administrador) - Todas as Áreas*")
         probs_data = supabase.table("problemas").select("*").execute().data
@@ -263,7 +260,6 @@ def pagina_dashboard():
     df['sla_due_at'] = pd.to_datetime(df['sla_due_at'])
     hoje = datetime.datetime.now()
 
-    # 2. KPIs Base
     abertos = len(df[df['status'] == 'aberto'])
     em_andamento = len(df[df['status'] == 'aprovado'])
     solucionados = len(df[df['status'] == 'solucionado'])
@@ -274,9 +270,7 @@ def pagina_dashboard():
     col2.metric("⚙️ Em Andamento", em_andamento)
     col3.metric("🔥 Vencidos (SLA)", vencidos, delta="Atenção!" if vencidos > 0 else "No Prazo", delta_color="inverse")
     col4.metric("✅ Solucionados", solucionados)
-
     st.markdown("---")
-    
     colA, colB = st.columns([1, 1])
     
     with colA:
@@ -288,19 +282,24 @@ def pagina_dashboard():
     with colB:
         st.subheader("🔥 Top Alertas Críticos")
         st.caption("Filtro de alertas não solucionados ordenados por prioridade e vencimento.")
-        
         df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
+        
         if not df_criticos.empty:
             peso_prio = {"Urgente": 1, "Normal": 2, "Baixo": 3}
             df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
             df_criticos = df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10)
             
-            df_display = df_criticos[['id', 'titulo', 'prioridade', 'status']].copy()
-            df_display.columns = ['ID', 'Problema', 'Prioridade', 'Status']
-            
-            def color_critico(val): return 'color: red; font-weight: bold;' if val == 'Urgente' else ''
-            try: st.dataframe(df_display.style.map(color_critico, subset=['Prioridade']), use_container_width=True, hide_index=True)
-            except: st.dataframe(df_display.style.applymap(color_critico, subset=['Prioridade']), use_container_width=True, hide_index=True)
+            # Novo layout iterativo para os críticos (Permite o teletransporte)
+            for _, row in df_criticos.iterrows():
+                with st.container():
+                    st.markdown(f"**#{row['id']} - {row['titulo']}**")
+                    c1, c2, c3 = st.columns([2,2,2])
+                    c1.markdown(f"<span style='color: {'red' if row['prioridade']=='Urgente' else 'orange'};'>{row['prioridade']}</span>", unsafe_allow_html=True)
+                    c2.caption(f"Vence: {row['sla_due_at'].strftime('%d/%m/%Y')}")
+                    with c3:
+                        if st.button("Acessar", key=f"dash_prob_{row['id']}"):
+                            teletransportar_para_alerta(row['id'])
+                    st.divider()
         else:
             st.success("Tudo sob controle! Nenhum alerta crítico pendente.")
 
@@ -311,13 +310,18 @@ def pagina_problemas():
     areas.sort()
     if not areas: areas = ["Geral"]
 
-    # Busca as regras de SLA no banco (Passo 12)
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
-    tab_lista, tab_novo, tab_detalhe = st.tabs(["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes do Alerta"])
+    # REMOVIDO st.tabs -> SUBSTITUÍDO POR st.radio PARA PERMITIR ROTEAMENTO
+    opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes do Alerta"]
+    idx_sub = opcoes_sub.index(st.session_state['sub_menu_prob'])
     
-    with tab_lista:
+    aba_atual = st.radio("Selecione a visualização:", opcoes_sub, index=idx_sub, horizontal=True)
+    st.session_state['sub_menu_prob'] = aba_atual  # Salva a escolha atual na memória
+    st.markdown("---")
+    
+    if aba_atual == "📋 Listagem de Alertas":
         colF1, colF2, colF3 = st.columns(3)
         with colF1: filtro_status = st.selectbox("Status", ["Todos", "aberto", "em_analise", "aprovado", "rejeitado", "solucionado"])
         with colF2: filtro_prio = st.selectbox("Prioridade", ["Todas", "Urgente", "Normal", "Baixo"])
@@ -332,11 +336,21 @@ def pagina_problemas():
                 if not df_prob.empty:
                     df_display = df_prob[['id', 'titulo', 'area', 'prioridade', 'status', 'criado_em', 'sla_due_at']].copy()
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    
+                    st.write("<br>", unsafe_allow_html=True)
+                    st.markdown("### 🚀 Acesso Rápido")
+                    col1, col2 = st.columns([1, 4])
+                    with col1:
+                        # Roteador rápido via Listagem
+                        opcoes_ids_rapido = [str(p['id']) for p in problemas_db]
+                        id_rapido = st.selectbox("ID do Alerta:", opcoes_ids_rapido)
+                        if st.button("Abrir Detalhe", type="primary", use_container_width=True):
+                            teletransportar_para_alerta(int(id_rapido))
                 else: st.info("Nenhum alerta encontrado com os filtros selecionados.")
             else: st.info("Nenhum problema cadastrado no sistema.")
         except Exception as e: st.error(f"Erro ao carregar tabela: {str(e)}")
 
-    with tab_novo:
+    elif aba_atual == "➕ Abrir Novo Alerta":
         with st.form("form_novo_prob"):
             titulo = st.text_input("Título do Alerta / Problema*")
             descricao = st.text_area("Descrição detalhada*")
@@ -347,31 +361,40 @@ def pagina_problemas():
             
             if st.form_submit_button("Abrir Alerta", type="primary"):
                 if titulo and descricao:
-                    # Aplica o SLA dinâmico do Banco
                     dias_adicionais = sla_configs['urgente_dias'] if prioridade == "Urgente" else sla_configs['normal_dias'] if prioridade == "Normal" else sla_configs['baixo_dias']
                     prazo = datetime.datetime.now() + datetime.timedelta(days=dias_adicionais)
                     nome_anexo = anexo.name if anexo else None
-                    
                     try:
                         supabase.table("problemas").insert({
                             "titulo": titulo, "descricao": descricao, "area": area_prob,
-                            "prioridade": prioridade, "status": "aberto",
-                            "criado_por": st.session_state['current_user']['login'],
+                            "prioridade": prioridade, "status": "aberto", "criado_por": st.session_state['current_user']['login'],
                             "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"),
-                            "anexo": nome_anexo
+                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"), "anexo": nome_anexo
                         }).execute()
                         st.success("✅ Alerta registrado com sucesso!")
+                        st.session_state['sub_menu_prob'] = "📋 Listagem de Alertas" # Volta pra lista
                         st.rerun()
                     except Exception as e: st.error(f"Erro no BD: {str(e)}")
                 else: st.warning("Título e Descrição são obrigatórios.")
 
-    with tab_detalhe:
+    elif aba_atual == "🔍 Detalhes do Alerta":
         try:
             problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
             if problemas_db:
-                opcoes_ids = [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
-                id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", [""] + opcoes_ids)
+                opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
+                
+                # Inteligência que localiza o ID selecionado via Teletransporte
+                idx_padrao = 0
+                if st.session_state['alerta_focus']:
+                    for i, opt in enumerate(opcoes_ids):
+                        if opt.startswith(str(st.session_state['alerta_focus']) + " -"):
+                            idx_padrao = i
+                            break
+                            
+                # Callback para limpar o foco se o usuário trocar a combo manualmente
+                def limpa_foco(): st.session_state['alerta_focus'] = None
+
+                id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", opcoes_ids, index=idx_padrao, key='_sel_alerta', on_change=limpa_foco)
                 
                 if id_selecionado != "":
                     id_real = int(id_selecionado.split(" - ")[0])
@@ -408,7 +431,7 @@ def pagina_problemas():
                                     if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
                                         supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
                                         supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "aprovado", "motivo": "Aprovado via painel."}).execute()
-                                        enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", "Problemas")
+                                        enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", f"Problemas|{alerta['id']}")
                                         st.success("Aprovado!"); st.rerun()
                                 with c_rej:
                                     with st.popover("❌ Rejeitar", use_container_width=True):
@@ -416,7 +439,7 @@ def pagina_problemas():
                                         if st.button("Confirmar Rejeição") and motivo:
                                             supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
                                             supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "rejeitado", "motivo": motivo}).execute()
-                                            enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"Seu alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", "Problemas")
+                                            enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"Seu alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", f"Problemas|{alerta['id']}")
                                             st.rerun()
                         
                         elif alerta['status'] == 'rejeitado':
@@ -430,7 +453,7 @@ def pagina_problemas():
                             
                             if acoes_db:
                                 for acao in acoes_db:
-                                    with st.expander(f"Ação: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
+                                    with st.expander(f"Ação #{acao['id']}: {acao['descricao']} | Status: {acao['status'].upper()}", expanded=True):
                                         resp_db = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data
                                         logins_resp = [r['colaborador_login'] for r in resp_db]
                                         st.write(f"**Responsáveis:** {', '.join([u['nome'] for u in users_db if u['login'] in logins_resp])}")
@@ -442,7 +465,7 @@ def pagina_problemas():
                                                 if st.form_submit_button("Atualizar Ação"):
                                                     supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
                                                     if novo_status == 'solucionado' and acao['status'] != 'solucionado':
-                                                        enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", "Problemas")
+                                                        enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
                                                     st.rerun()
                                         else: 
                                             st.info("Apenas responsáveis podem editar.")
@@ -462,8 +485,7 @@ def pagina_problemas():
                                             supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
                                             enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
                                         st.success("Ação salva!"); st.rerun()
-                                    else:
-                                        st.error("Preencha descrição e escolha responsáveis.")
+                                    else: st.error("Preencha descrição e escolha responsáveis.")
         except Exception as e: st.error(f"Erro na exibição dos detalhes: {e}")
 
 def pagina_acoes():
@@ -478,31 +500,35 @@ def pagina_acoes():
             action_ids = [r['action_id'] for r in resp_db]
             acoes_db = supabase.table("problem_actions").select("*").in_("id", action_ids).execute().data
             if acoes_db:
-                df_acoes = pd.DataFrame(acoes_db)
-                prob_ids = df_acoes['problem_id'].unique().tolist()
-                probs_db = supabase.table("problemas").select("id, titulo").in_("id", prob_ids).execute().data
-                df_acoes['Alerta_Origem'] = df_acoes['problem_id'].map({p['id']: p['titulo'] for p in probs_db})
-                df_display = df_acoes[['id', 'Alerta_Origem', 'descricao', 'prazo', 'status']].copy()
-                df_display.columns = ['ID Ação', 'Alerta Origem', 'O que fazer', 'Prazo', 'Status']
+                # Transforma a tabela chata em Cards Interativos com Botão de Teletransporte
+                probs_db = supabase.table("problemas").select("id, titulo").execute().data
+                prob_map = {p['id']: p['titulo'] for p in probs_db}
                 
-                def color_st(val): return 'color: green;' if val == 'solucionado' else 'color: red;' if val == 'pendente' else 'color: orange;'
-                try: st.dataframe(df_display.style.map(color_st, subset=['Status']), use_container_width=True, hide_index=True)
-                except: st.dataframe(df_display.style.applymap(color_st, subset=['Status']), use_container_width=True, hide_index=True)
-                st.info("💡 Para alterar status e adicionar comentários, vá ao Menu 'Problemas' e abra o Alerta Origem.")
+                for acao in acoes_db:
+                    titulo_prob = prob_map.get(acao['problem_id'], "Alerta Excluído")
+                    cor_status = "🟢" if acao['status'] == 'solucionado' else "🔴" if acao['status'] == 'pendente' else "🟠"
+                    
+                    with st.expander(f"{cor_status} Ação #{acao['id']} - {acao['descricao']}", expanded=True):
+                        st.write(f"**Origem:** Alerta #{acao['problem_id']} ({titulo_prob})")
+                        st.write(f"**Prazo:** {acao['prazo'][:10]}")
+                        if st.button("Abrir Alerta e Editar Ação", key=f"jump_{acao['id']}", type="primary"):
+                            teletransportar_para_alerta(acao['problem_id'])
+            else:
+                st.success("Nenhuma ação encontrada.")
     except Exception as e: st.error(f"Erro: {e}")
 
 def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores e Acessos")
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
-    if is_admin:
-        tab1, tab2, tab3 = st.tabs(["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"])
-    else:
-        tab1, = st.tabs(["📋 Lista de Colaboradores"])
+    # Submenu inteligente em vez de Tabs
+    opcoes_sub = ["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"] if is_admin else ["📋 Lista de Colaboradores"]
+    aba_atual = st.radio("Opções:", opcoes_sub, horizontal=True)
+    st.markdown("---")
     
     users_db = supabase.table("usuarios").select("*").execute().data
     
-    with tab1:
+    if aba_atual == "📋 Lista de Colaboradores":
         if users_db:
             df_users = pd.DataFrame(users_db)
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
@@ -512,7 +538,7 @@ def pagina_colaboradores():
             except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
 
     if is_admin:
-        with tab2:
+        if aba_atual == "➕ Adicionar Novo":
             st.markdown("Cadastre manualmente um novo colaborador (A senha inicial será WEG2026).")
             with st.form("form_add_colab"):
                 col1, col2 = st.columns(2)
@@ -531,7 +557,7 @@ def pagina_colaboradores():
                         else: st.error("O usuário já existe no sistema.")
                     else: st.warning("Preencha todos os campos obrigatórios.")
 
-        with tab3:
+        elif aba_atual == "✏️ Editar / Desativar":
             st.markdown("Altere a área, papel ou desative o acesso de um colaborador.")
             logins = [u['login'] for u in users_db]
             usuario_selecionado = st.selectbox("Selecione o Usuário:", logins)
@@ -593,7 +619,6 @@ def pagina_administracao():
                     st.success("Facilitador salvo!"); st.rerun()
 
         st.markdown("---")
-        # PASSO 12 - ADMINISTRAÇÃO DE SLA
         st.subheader("⏱️ Configurações de SLA (Prazos)")
         try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
         except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
@@ -604,7 +629,6 @@ def pagina_administracao():
             with c1: dias_u = st.number_input("Dias (Urgente)", value=sla_configs['urgente_dias'], min_value=1)
             with c2: dias_n = st.number_input("Dias (Normal)", value=sla_configs['normal_dias'], min_value=1)
             with c3: dias_b = st.number_input("Dias (Baixo)", value=sla_configs['baixo_dias'], min_value=1)
-            
             if st.form_submit_button("Atualizar Prazos de SLA"):
                 supabase.table("sla_settings").upsert({"id": 1, "urgente_dias": dias_u, "normal_dias": dias_n, "baixo_dias": dias_b}).execute()
                 st.success("Prazos atualizados! Os novos alertas já usarão esta regra.")
@@ -614,8 +638,7 @@ def pagina_administracao():
         st.subheader("📝 Solicitações de Acesso Pendentes")
         reqs_db = supabase.table("solicitacoes").select("*").execute().data
         pendentes = [r for r in reqs_db if r['status'] == 'pendente']
-        if not pendentes:
-            st.success("Nenhuma solicitação pendente no momento.")
+        if not pendentes: st.success("Nenhuma solicitação pendente no momento.")
         else:
             for req in pendentes:
                 with st.expander(f"📌 {req['nome']}", expanded=True):
@@ -635,8 +658,7 @@ def pagina_administracao():
             def colorir_status_req(val): return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
             try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
             except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
-        else:
-            st.info("Nenhum histórico disponível.")
+        else: st.info("Nenhum histórico disponível.")
 
         st.markdown("---")
         st.subheader("📧 Diagnóstico de E-mail")
