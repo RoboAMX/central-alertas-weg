@@ -248,7 +248,6 @@ def pagina_colaboradores():
         for login, dados in st.session_state['db_users'].items():
             u = dados.copy()
             u['login'] = login
-            # DEFESA CONTRA FANTASMAS DA SESSÃO ANTIGA:
             u['email'] = u.get('email', f"{login}@weg.net")
             u['ativo'] = u.get('ativo', True)
             u['role'] = u.get('role', 'User')
@@ -267,8 +266,15 @@ def pagina_colaboradores():
                     color = 'green' if val else 'red'
                     return f'color: {color}; font-weight: bold;'
                 return ''
+            
+            # CORREÇÃO DO PANDAS: Usando .map() em vez de .applymap()
+            try:
+                tabela_estilizada = df_display.style.map(colorir_ativo, subset=['Status Ativo'])
+            except AttributeError:
+                # Caso rode num Pandas mais antigo que não aceita map
+                tabela_estilizada = df_display.style.applymap(colorir_ativo, subset=['Status Ativo'])
                 
-            st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
+            st.dataframe(tabela_estilizada, use_container_width=True, hide_index=True)
         else:
             st.warning("Nenhum usuário cadastrado.")
 
@@ -390,7 +396,13 @@ def pagina_administracao():
             color = 'green' if val == 'aprovado' else 'red'
             return f'color: {color}; font-weight: bold;'
             
-        st.dataframe(df_hist.style.applymap(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
+        # CORREÇÃO DO PANDAS AQUI TAMBÉM
+        try:
+            hist_estilizado = df_hist.style.map(colorir_status, subset=['Status'])
+        except AttributeError:
+            hist_estilizado = df_hist.style.applymap(colorir_status, subset=['Status'])
+            
+        st.dataframe(hist_estilizado, use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum histórico disponível.")
 
