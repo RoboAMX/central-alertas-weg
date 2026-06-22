@@ -39,7 +39,15 @@ def render_header():
 
 def render_sidebar():
     """Menu lateral de navegação integrado ao Streamlit"""
-    st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/WEG_logo.svg/1200px-WEG_logo.svg.png", width=100)
+    
+    # ==== CORREÇÃO DO LOGO AQUI ====
+    # Agora ele procura o arquivo local que você subiu para o GitHub
+    try:
+        st.sidebar.image("logo_weg.png", width=150)
+    except:
+        st.sidebar.markdown("**[LOGO WEG]**") # Fallback caso a imagem ainda não tenha subido
+    # ===============================
+    
     st.sidebar.markdown("### 🚨 Navegação")
     
     opcoes_menu = [
