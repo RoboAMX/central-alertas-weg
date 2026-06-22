@@ -72,13 +72,8 @@ def aprovar_solicitacao(req_id, req_email, req_nome):
     check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
     if len(check.data) == 0:
         supabase.table("usuarios").insert({
-            "login": login_extraido,
-            "nome": req_nome,
-            "email": req_email,
-            "senha": "WEG2026",
-            "area": "A definir",
-            "role": "User",
-            "ativo": True
+            "login": login_extraido, "nome": req_nome, "email": req_email,
+            "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True
         }).execute()
 
 def rejeitar_solicitacao(req_id):
@@ -91,10 +86,8 @@ def render_login():
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
         st.write("<br><br>", unsafe_allow_html=True)
-        try:
-            st.image("logo_weg.png", width=200)
-        except:
-            st.markdown("### [LOGO WEG]")
+        try: st.image("logo_weg.png", width=200)
+        except: st.markdown("### [LOGO WEG]")
             
         st.markdown("<h2 style='color: #00579D;'>Central de Alertas</h2>", unsafe_allow_html=True)
         aba_login, aba_solicitar, aba_reset = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso", "🔑 Esqueci a Senha"])
@@ -105,41 +98,33 @@ def render_login():
                 senha = st.text_input("Senha", type="password")
                 btn_login = st.form_submit_button("Entrar", use_container_width=True)
                 if btn_login:
-                    if fazer_login(usuario_login, senha):
-                        st.rerun()
-                    else:
-                        st.error("Usuário ou senha incorretos, ou cadastro inativo.")
+                    if fazer_login(usuario_login, senha): st.rerun()
+                    else: st.error("Usuário ou senha incorretos, ou cadastro inativo.")
         
         with aba_solicitar:
             with st.form("form_solicitacao"):
                 req_nome = st.text_input("Nome Completo")
                 req_email = st.text_input("E-mail corporativo (@weg.net)")
-                btn_solicitar = st.form_submit_button("Enviar Solicitação", use_container_width=True)
-                if btn_solicitar:
+                if st.form_submit_button("Enviar Solicitação", use_container_width=True):
                     if req_nome and req_email:
                         supabase.table("solicitacoes").insert({
-                            "nome": req_nome,
-                            "email": req_email,
-                            "status": "pendente",
+                            "nome": req_nome, "email": req_email, "status": "pendente",
                             "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         }).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação.")
-                    else:
-                        st.warning("Preencha todos os campos obrigatórios.")
+                    else: st.warning("Preencha todos os campos.")
                         
         with aba_reset:
             st.info("Informe seu usuário para redefinir a senha.")
             with st.form("form_reset"):
                 reset_usuario = st.text_input("Usuário WEG")
-                btn_reset = st.form_submit_button("Redefinir Senha", use_container_width=True)
-                if btn_reset:
+                if st.form_submit_button("Redefinir Senha", use_container_width=True):
                     user_clean = reset_usuario.strip().lower()
                     check = supabase.table("usuarios").select("login").eq("login", user_clean).execute()
                     if len(check.data) > 0:
                         supabase.table("usuarios").update({"senha": "WEG2026"}).eq("login", user_clean).execute()
-                        st.success(f"✅ Senha redefinida para **WEG2026**.")
-                    else:
-                        st.error("Usuário não encontrado.")
+                        st.success("✅ Senha redefinida para **WEG2026**.")
+                    else: st.error("Usuário não encontrado.")
 
 def render_trocar_senha():
     col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -149,14 +134,10 @@ def render_trocar_senha():
         with st.form("form_troca_senha"):
             nova_senha = st.text_input("Nova Senha", type="password")
             confirma_senha = st.text_input("Confirmar Nova Senha", type="password")
-            btn_salvar = st.form_submit_button("Salvar e Continuar", use_container_width=True)
-            if btn_salvar:
-                if len(nova_senha) < 6:
-                    st.error("A nova senha deve ter pelo menos 6 caracteres.")
-                elif nova_senha == "WEG2026":
-                    st.error("A nova senha não pode ser igual à senha padrão.")
-                elif nova_senha != confirma_senha:
-                    st.error("As senhas não coincidem.")
+            if st.form_submit_button("Salvar e Continuar", use_container_width=True):
+                if len(nova_senha) < 6: st.error("A nova senha deve ter pelo menos 6 caracteres.")
+                elif nova_senha == "WEG2026": st.error("A nova senha não pode ser igual à padrão.")
+                elif nova_senha != confirma_senha: st.error("As senhas não coincidem.")
                 else:
                     login_atual = st.session_state['current_user']['login']
                     supabase.table("usuarios").update({"senha": nova_senha}).eq("login", login_atual).execute()
@@ -169,27 +150,20 @@ def render_trocar_senha():
 # ==========================================
 def render_header():
     col1, col2, col3 = st.columns([8, 1, 2])
-    with col1:
-        st.title("Central de Alertas")
-    with col2:
-        st.markdown("<h3 style='text-align: right;'>🔔 <span style='color:red; font-size:14px;'>●</span></h3>", unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"**👤 {st.session_state['current_user']['nome']}**<br><span style='font-size:12px; color:gray;'>{st.session_state['current_user']['area']}</span>", unsafe_allow_html=True)
+    with col1: st.title("Central de Alertas")
+    with col2: st.markdown("<h3 style='text-align: right;'>🔔 <span style='color:red; font-size:14px;'>●</span></h3>", unsafe_allow_html=True)
+    with col3: st.markdown(f"**👤 {st.session_state['current_user']['nome']}**<br><span style='font-size:12px; color:gray;'>{st.session_state['current_user']['area']}</span>", unsafe_allow_html=True)
     st.markdown("---")
 
 def render_sidebar():
-    try:
-        st.sidebar.image("logo_weg.png", width=150)
-    except:
-        st.sidebar.markdown("**[LOGO WEG]**")
+    try: st.sidebar.image("logo_weg.png", width=150)
+    except: st.sidebar.markdown("**[LOGO WEG]**")
     st.sidebar.markdown("### 🚨 Navegação")
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
     menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu)
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
-    if st.sidebar.button("Sair (Logout)", use_container_width=True):
-        fazer_logout()
-    st.sidebar.caption("© 2026 WEG - Almoxarifado")
+    if st.sidebar.button("Sair (Logout)", use_container_width=True): fazer_logout()
     return menu_selecionado
 
 # ==========================================
@@ -205,18 +179,15 @@ def pagina_problemas():
     users_db = supabase.table("usuarios").select("area").execute().data
     areas = list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir']))
     areas.sort()
-    if not areas:
-        areas = ["Geral"]
+    if not areas: areas = ["Geral"]
 
-    tab_lista, tab_novo, tab_detalhe = st.tabs(["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes"])
+    tab_lista, tab_novo, tab_detalhe = st.tabs(["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes do Alerta"])
     
     # ABA 1: LISTAGEM
     with tab_lista:
         colF1, colF2, colF3 = st.columns(3)
-        with colF1:
-            filtro_status = st.selectbox("Status", ["Todos", "aberto", "em_analise", "aprovado", "rejeitado", "solucionado"])
-        with colF2:
-            filtro_prio = st.selectbox("Prioridade", ["Todas", "Urgente", "Normal", "Baixo"])
+        with colF1: filtro_status = st.selectbox("Status", ["Todos", "aberto", "em_analise", "aprovado", "rejeitado", "solucionado"])
+        with colF2: filtro_prio = st.selectbox("Prioridade", ["Todas", "Urgente", "Normal", "Baixo"])
             
         try:
             problemas_db = supabase.table("problemas").select("*").execute().data
@@ -228,11 +199,9 @@ def pagina_problemas():
                 if not df_prob.empty:
                     df_display = df_prob[['id', 'titulo', 'area', 'prioridade', 'status', 'criado_em', 'sla_due_at']].copy()
                     st.dataframe(df_display, use_container_width=True, hide_index=True)
-                    st.caption("Para ver os detalhes, vá na aba 'Detalhes'.")
-                else:
-                    st.info("Nenhum alerta encontrado com os filtros atuais.")
-            else:
-                st.info("Nenhum problema cadastrado no sistema ainda.")
+                    st.caption("Para ver detalhes ou aprovar, vá na aba 'Detalhes do Alerta'.")
+                else: st.info("Nenhum alerta encontrado com os filtros atuais.")
+            else: st.info("Nenhum problema cadastrado no sistema ainda.")
         except Exception as e:
             st.error(f"Erro ao carregar lista: {str(e)}")
 
@@ -242,44 +211,32 @@ def pagina_problemas():
         with st.form("form_novo_prob"):
             titulo = st.text_input("Título do Alerta / Problema*")
             descricao = st.text_area("Descrição detalhada*")
-            
             col1, col2 = st.columns(2)
-            with col1:
-                area_prob = st.selectbox("Área afetada*", areas)
-            with col2:
-                prioridade = st.selectbox("Prioridade*", ["Urgente", "Normal", "Baixo"])
-                
-            anexo = st.file_uploader("Anexar Evidência (Imagem, PDF, Excel)", type=['png','jpg','pdf','xlsx'])
+            with col1: area_prob = st.selectbox("Área afetada*", areas)
+            with col2: prioridade = st.selectbox("Prioridade*", ["Urgente", "Normal", "Baixo"])
+            anexo = st.file_uploader("Anexar Evidência", type=['png','jpg','pdf','xlsx'])
             
             if st.form_submit_button("Abrir Alerta", type="primary"):
                 if titulo and descricao:
                     dias_sla = {"Urgente": 1, "Normal": 3, "Baixo": 5}
                     prazo = datetime.datetime.now() + datetime.timedelta(days=dias_sla[prioridade])
                     nome_anexo = anexo.name if anexo else None
-                    
-                    # TENTATIVA COM TRATAMENTO DE ERROS NA TELA
                     try:
                         supabase.table("problemas").insert({
-                            "titulo": titulo,
-                            "descricao": descricao,
-                            "area": area_prob,
-                            "prioridade": prioridade,
-                            "status": "aberto",
+                            "titulo": titulo, "descricao": descricao, "area": area_prob,
+                            "prioridade": prioridade, "status": "aberto",
                             "criado_por": st.session_state['current_user']['login'],
-                            "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), # Formato puro do Postgres
-                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"), # Formato puro do Postgres
+                            "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S"),
                             "anexo": nome_anexo
                         }).execute()
-                        
                         st.success("✅ Alerta registrado com sucesso!")
                         st.rerun()
                     except Exception as e:
-                        # Se quebrar, ele vai mostrar o erro exato do banco de dados em amarelo
-                        st.warning(f"Ocorreu um erro no Banco de Dados: {str(e)}")
-                else:
-                    st.warning("O Título e a Descrição são obrigatórios.")
+                        st.warning(f"Erro ao salvar: {str(e)}")
+                else: st.warning("Título e Descrição são obrigatórios.")
 
-    # ABA 3: DETALHES
+    # ABA 3: DETALHES E APROVAÇÃO (PASSO 8)
     with tab_detalhe:
         try:
             problemas_db = supabase.table("problemas").select("*").execute().data
@@ -287,7 +244,7 @@ def pagina_problemas():
                 st.info("Não há alertas para detalhar.")
             else:
                 opcoes_ids = [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
-                id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", [""] + opcoes_ids)
+                id_selecionado = st.selectbox("Selecione o Alerta:", [""] + opcoes_ids)
                 
                 if id_selecionado != "":
                     id_real = int(id_selecionado.split(" - ")[0])
@@ -305,13 +262,71 @@ def pagina_problemas():
                         st.markdown("**Descrição:**")
                         st.info(alerta['descricao'])
                         
-                        if alerta['anexo']:
-                            st.markdown(f"📎 **Anexo:** `{alerta['anexo']}`")
-                            
-                        st.markdown(f"⏳ **Prazo de Resolução (SLA):** {alerta['sla_due_at']}")
+                        # ======== LÓGICA DE APROVAÇÃO (PASSO 8) ========
                         st.markdown("---")
-                        st.write("*A área de aprovação será habilitada no próximo passo.*")
-        except:
+                        
+                        if alerta['status'] == 'aberto':
+                            st.markdown("### ⚙️ Análise do Facilitador")
+                            
+                            # Verifica quem pode aprovar
+                            is_admin = st.session_state['current_user']['role'] == 'Admin'
+                            is_creator = st.session_state['current_user']['login'] == alerta['criado_por']
+                            
+                            fac_resp = supabase.table("area_facilitadores").select("facilitador_login").eq("area", alerta['area']).execute()
+                            fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
+                            is_facilitator = st.session_state['current_user']['login'] == fac_area
+                            
+                            # Regra: Só admin aprova o próprio. Facilitador aprova da sua área (desde que não seja dele).
+                            if is_creator and not is_admin:
+                                st.warning("⚠️ **Bloqueado:** Você não pode aprovar um alerta criado por você mesmo. Aguarde o Administrador ou o Facilitador da área.")
+                            elif not is_admin and not is_facilitator:
+                                st.warning("⚠️ **Acesso Restrito:** Apenas o Administrador ou o Facilitador desta área podem aprovar/rejeitar.")
+                            else:
+                                c_apr, c_rej = st.columns(2)
+                                with c_apr:
+                                    if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
+                                        try:
+                                            supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
+                                            supabase.table("problem_justifications").insert({
+                                                "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
+                                                "acao": "aprovado", "motivo": "Aprovado no painel"
+                                            }).execute()
+                                            st.success("Alerta Aprovado! Atualize a página.")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Erro ao aprovar. A tabela 'problem_justifications' pode estar bloqueada no Supabase. Destranque o cadeado (Disable RLS). Erro: {e}")
+
+                                with c_rej:
+                                    with st.popover("❌ Rejeitar Alerta", use_container_width=True):
+                                        st.markdown("O alerta rejeitado ficará bloqueado.")
+                                        motivo = st.text_area("Motivo da Rejeição*")
+                                        if st.button("Confirmar Rejeição"):
+                                            if motivo:
+                                                try:
+                                                    supabase.table("problemas").update({"status": "rejeitado"}).eq("id", alerta['id']).execute()
+                                                    supabase.table("problem_justifications").insert({
+                                                        "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
+                                                        "acao": "rejeitado", "motivo": motivo
+                                                    }).execute()
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"Erro. Destranque a tabela 'problem_justifications' no Supabase. Erro: {e}")
+                                            else:
+                                                st.error("O motivo é obrigatório.")
+                        
+                        elif alerta['status'] == 'rejeitado':
+                            # Busca o motivo da rejeição no banco
+                            try:
+                                just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
+                                motivo_rej = just_db[-1]['motivo'] if just_db else "Motivo não encontrado."
+                            except:
+                                motivo_rej = "Erro ao carregar motivo."
+                            
+                            st.error(f"🚨 **ALERTA REJEITADO (Somente Leitura)**\n\n**Motivo:** {motivo_rej}")
+                            
+                        elif alerta['status'] == 'aprovado':
+                            st.success("✅ Este alerta está aprovado e pronto para receber Ações Corretivas.")
+        except Exception as e:
             pass
 
 def pagina_acoes():
@@ -320,73 +335,16 @@ def pagina_acoes():
 
 def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores")
-    is_admin = st.session_state['current_user']['role'] == 'Admin'
-    
-    if is_admin:
-        tab1, tab2, tab3 = st.tabs(["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"])
-    else:
-        tab1, = st.tabs(["📋 Lista de Colaboradores"])
-    
+    tab1, = st.tabs(["📋 Lista de Colaboradores"])
     users_db = supabase.table("usuarios").select("*").execute().data
-    
     with tab1:
         if users_db:
             df_users = pd.DataFrame(users_db)
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
             df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
-            
-            def colorir_ativo(val):
-                if isinstance(val, bool):
-                    return f"color: {'green' if val else 'red'}; font-weight: bold;"
-                return ''
-            
-            try:
-                st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
-            except:
-                st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
-
-    if is_admin:
-        with tab2:
-            with st.form("form_add_colab"):
-                col1, col2 = st.columns(2)
-                with col1: novo_nome = st.text_input("Nome*"); novo_email = st.text_input("E-mail*")
-                with col2: novo_area = st.text_input("Área*"); novo_papel = st.selectbox("Papel*", ["User", "Facilitador", "Admin"])
-                
-                if st.form_submit_button("Salvar Colaborador"):
-                    if novo_nome and novo_email and novo_area:
-                        novo_login = novo_email.strip().lower().split('@')[0]
-                        check = supabase.table("usuarios").select("login").eq("login", novo_login).execute()
-                        if len(check.data) == 0:
-                            supabase.table("usuarios").insert({
-                                "login": novo_login, "nome": novo_nome, "email": novo_email,
-                                "senha": "WEG2026", "area": novo_area, "role": novo_papel, "ativo": True
-                            }).execute()
-                            st.success("Adicionado com sucesso!")
-
-        with tab3:
-            logins = [u['login'] for u in users_db]
-            usuario_selecionado = st.selectbox("Selecione o Usuário:", logins)
-            if usuario_selecionado:
-                user_data = next((u for u in users_db if u['login'] == usuario_selecionado), None)
-                if user_data:
-                    with st.form("form_edit_colab"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            edit_nome = st.text_input("Nome", value=user_data['nome'])
-                            edit_email = st.text_input("E-mail", value=user_data['email'])
-                            edit_area = st.text_input("Área", value=user_data['area'])
-                        with col2:
-                            roles = ["User", "Facilitador", "Admin"]
-                            idx = roles.index(user_data['role']) if user_data['role'] in roles else 0
-                            edit_papel = st.selectbox("Nível de Acesso", roles, index=idx)
-                            edit_ativo = st.checkbox("Ativo", value=user_data['ativo'])
-                        
-                        if st.form_submit_button("Salvar Alterações"):
-                            supabase.table("usuarios").update({
-                                "nome": edit_nome, "email": edit_email, "area": edit_area,
-                                "role": edit_papel, "ativo": edit_ativo
-                            }).eq("login", usuario_selecionado).execute()
-                            st.success("Atualizado!")
+            def colorir_ativo(val): return f"color: {'green' if val else 'red'}; font-weight: bold;"
+            try: st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
+            except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
 
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
@@ -407,23 +365,20 @@ def pagina_administracao():
                 area_selecionada = st.selectbox("1. Selecione a Área", areas)
                 active_users = [u for u in users_db if u['ativo']]
                 user_options = ["Nenhum"] + [f"{u['nome']} ({u['login']})" for u in active_users]
-                
                 idx = 0
                 current_fac = fac_map.get(area_selecionada, "")
                 if current_fac:
                     for i, opt in enumerate(user_options):
                         if f"({current_fac})" in opt: idx = i; break
-                            
                 novo_fac = st.selectbox("2. Selecione o Facilitador", user_options, index=idx)
-                
                 if st.form_submit_button("Salvar"):
-                    if novo_fac == "Nenhum":
-                        supabase.table("area_facilitadores").delete().eq("area", area_selecionada).execute()
+                    if novo_fac == "Nenhum": supabase.table("area_facilitadores").delete().eq("area", area_selecionada).execute()
                     else:
                         fac_login = novo_fac.split("(")[-1].replace(")", "")
                         supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_login}).execute()
-                    st.success("Salvo!")
-                    st.rerun()
+                        usr = next((u for u in active_users if u['login'] == fac_login), None)
+                        if usr and usr['role'] == 'User': supabase.table("usuarios").update({"role": "Facilitador"}).eq("login", fac_login).execute()
+                    st.success("Salvo!"); st.rerun()
 
     with colB:
         st.subheader("📝 Solicitações Pendentes")
@@ -434,11 +389,9 @@ def pagina_administracao():
                 with st.expander(f"📌 {req['nome']}", expanded=True):
                     c1, c2 = st.columns(2)
                     with c1:
-                        if st.button("✅ Aprovar", key=f"apr_{req['id']}"):
-                            aprovar_solicitacao(req['id'], req['email'], req['nome']); st.rerun()
+                        if st.button("✅ Aprovar", key=f"apr_{req['id']}"): aprovar_solicitacao(req['id'], req['email'], req['nome']); st.rerun()
                     with c2:
-                        if st.button("❌ Rejeitar", key=f"rej_{req['id']}"):
-                            rejeitar_solicitacao(req['id']); st.rerun()
+                        if st.button("❌ Rejeitar", key=f"rej_{req['id']}"): rejeitar_solicitacao(req['id']); st.rerun()
 
 # ==========================================
 # 7. ROTEADOR
