@@ -305,7 +305,6 @@ def pagina_administracao():
         st.subheader("👨‍💼 Facilitadores por Área")
         st.markdown("Defina quem aprova os problemas em cada área.")
         
-        # Pega todas as áreas únicas
         areas = list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir']))
         areas.sort()
         
@@ -318,7 +317,6 @@ def pagina_administracao():
             with st.form("form_facilitadores"):
                 area_selecionada = st.selectbox("1. Selecione a Área", areas)
                 
-                # Prepara lista de usuários ativos
                 active_users = [u for u in users_db if u['ativo']]
                 user_options = ["Nenhum"] + [f"{u['nome']} ({u['login']})" for u in active_users]
                 
@@ -338,14 +336,14 @@ def pagina_administracao():
                     else:
                         fac_login = novo_fac.split("(")[-1].replace(")", "")
                         
-                        # Salva na tabela
-                        check = supabase.table("area_facilitadores").select("*").eq("area", area_selecionada).execute()
-                        if len(check.data) > 0:
-                            supabase.table("area_facilitadores").update({"facilitador_login": fac_login}).eq("area", area_selecionada).execute()
-                        else:
-                            supabase.table("area_facilitadores").insert({"area": area_selecionada, "facilitador_login": fac_login}).execute()
+                        # NOVO CÓDIGO BULLETPROOF (UPSERT)
+                        # Ele insere se não existir, ou atualiza se já existir, em 1 única linha!
+                        supabase.table("area_facilitadores").upsert({
+                            "area": area_selecionada, 
+                            "facilitador_login": fac_login
+                        }).execute()
                         
-                        # Promove o usuário a Facilitador se ele for apenas User
+                        # Promove a Facilitador se for User comum
                         usr = next((u for u in active_users if u['login'] == fac_login), None)
                         if usr and usr['role'] == 'User':
                             supabase.table("usuarios").update({"role": "Facilitador"}).eq("login", fac_login).execute()
