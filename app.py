@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+import pandas as pd
 
 # ==========================================
 # 1. CONFIGURAÇÃO DA PÁGINA (Identidade WEG)
@@ -15,23 +16,23 @@ st.set_page_config(
 # 2. BANCO DE DADOS SIMULADO (Memória)
 # ==========================================
 def inicializar_banco():
-    # Tabela de Usuários
     if 'db_users' not in st.session_state:
         st.session_state['db_users'] = {
             "roberto": {
                 "nome": "Roberto",
-                "senha": "WEG2026", # Senha padrão que força a troca
+                "senha": "WEG2026", 
                 "area": "Almoxarifado - WEN SZO",
-                "role": "Admin",
+                "role": "Admin", # Papéis: Admin, Facilitador, User
                 "ativo": True
             }
         }
     
-    # Tabela de Solicitações de Acesso
     if 'db_requests' not in st.session_state:
         st.session_state['db_requests'] = []
+        
+    if 'request_counter' not in st.session_state:
+        st.session_state['request_counter'] = 1
 
-    # Controle de Sessão Atual
     if 'authenticated' not in st.session_state:
         st.session_state['authenticated'] = False
     if 'must_change_password' not in st.session_state:
@@ -42,7 +43,7 @@ def inicializar_banco():
 inicializar_banco()
 
 # ==========================================
-# 3. FUNÇÕES DE AUTENTICAÇÃO
+# 3. FUNÇÕES DE AUTENTICAÇÃO E ADMINISTRAÇÃO
 # ==========================================
 def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
@@ -56,7 +57,6 @@ def fazer_login(usuario_login, senha):
             "area": usuario['area'],
             "role": usuario['role']
         }
-        # Regra de troca de senha obrigatória
         if senha == "WEG2026":
             st.session_state['must_change_password'] = True
         else:
@@ -70,11 +70,31 @@ def fazer_logout():
     st.session_state['current_user'] = None
     st.rerun()
 
+def aprovar_solicitacao(req_id):
+    """Aprova acesso, cria o usuário e define senha WEG2026"""
+    for req in st.session_state['db_requests']:
+        if req['id'] == req_id:
+            req['status'] = 'aprovado'
+            st.session_state['db_users'][req['login']] = {
+                "nome": req['nome'],
+                "senha": "WEG2026",
+                "area": req['area'],
+                "role": "User", # Entra como usuário comum por padrão
+                "ativo": True
+            }
+            break
+
+def rejeitar_solicitacao(req_id):
+    """Rejeita a solicitação de acesso"""
+    for req in st.session_state['db_requests']:
+        if req['id'] == req_id:
+            req['status'] = 'rejeitado'
+            break
+
 # ==========================================
 # 4. TELAS DE LOGIN, SOLICITAÇÃO E RESET
 # ==========================================
 def render_login():
-    # Centralizando a tela de login
     col1, col2, col3 = st.columns([1, 1.5, 1])
     
     with col2:
@@ -86,7 +106,6 @@ def render_login():
             
         st.markdown("<h2 style='color: #00579D;'>Central de Alertas</h2>", unsafe_allow_html=True)
         
-        # Abas da tela inicial atualizadas
         aba_login, aba_solicitar, aba_reset = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso", "🔑 Esqueci a Senha"])
         
         # ABA 1: ENTRAR
@@ -114,20 +133,22 @@ def render_login():
                 if btn_solicitar:
                     if req_nome and req_usuario and req_area:
                         st.session_state['db_requests'].append({
+                            "id": st.session_state['request_counter'],
                             "nome": req_nome,
                             "login": req_usuario.strip().lower(),
                             "area": req_area,
                             "motivo": req_motivo,
                             "status": "pendente",
-                            "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         })
+                        st.session_state['request_counter'] += 1
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else:
                         st.warning("Preencha todos os campos obrigatórios.")
                         
-        # ABA 3: ESQUECI A SENHA (RESET)
+        # ABA 3: ESQUECI A SENHA
         with aba_reset:
-            st.info("Informe seu usuário. Sua senha será redefinida para a padrão e você deverá trocá-la no próximo acesso.")
+            st.info("Informe seu usuário para redefinir a senha de volta para o padrão (WEG2026).")
             with st.form("form_reset"):
                 reset_usuario = st.text_input("Usuário WEG")
                 btn_reset = st.form_submit_button("Redefinir Senha", use_container_width=True)
@@ -135,7 +156,6 @@ def render_login():
                 if btn_reset:
                     user_clean = reset_usuario.strip().lower()
                     if user_clean in st.session_state['db_users']:
-                        # Reseta a senha para o padrão
                         st.session_state['db_users'][user_clean]['senha'] = "WEG2026"
                         st.success(f"✅ Senha do usuário '{user_clean}' redefinida para **WEG2026**.")
                     else:
@@ -188,8 +208,11 @@ def render_sidebar():
         
     st.sidebar.markdown("### 🚨 Navegação")
     
-    opcoes_menu = ["Dashboard", "Problemas", "Minhas Ações", "Colaboradores", "Administração"]
-    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, key="menu_lateral")
+    # Adicionado ícones simulados para melhor visual
+    opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
+    
+    # Lógica de seleção limpa e segura (Evita erro de Streamlit key)
+    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu)
     
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
@@ -205,30 +228,82 @@ def render_sidebar():
 # 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
-    st.header("📊 Dashboard")
+    st.header("Dashboard")
     st.info("Visão geral dos alertas, problemas e KPIs. (Será construído no Step 11)")
 
 def pagina_problemas():
-    st.header("⚠️ Gestão de Problemas")
+    st.header("Gestão de Problemas")
     st.info("Abertura, listagem e detalhe de problemas e alertas. (Será construído no Step 7)")
-    pesquisa = st.text_input("Pesquisar problema:", key="pesquisa_problema_input")
-    st.write(f"Você pesquisou por: {pesquisa}")
 
 def pagina_acoes():
-    st.header("✅ Minhas Ações Corretivas")
+    st.header("Minhas Ações Corretivas")
     st.info("Lista de ações onde você é o responsável. (Será construído no Step 9)")
 
 def pagina_colaboradores():
-    st.header("👥 Colaboradores")
-    st.info("Gestão de perfis e áreas (CRUD de colaboradores). (Será construído no Step 5)")
+    st.header("👥 Base de Colaboradores")
+    st.markdown("Lista oficial de todos os colaboradores com acesso ao sistema (Aprovados).")
+    
+    # Transforma o dict de usuários em uma tabela bonita usando Pandas
+    df_users = pd.DataFrame.from_dict(st.session_state['db_users'], orient='index')
+    # Reordenando as colunas e traduzindo para exibição
+    df_display = df_users[['nome', 'area', 'role', 'ativo']].copy()
+    df_display.columns = ['Nome Completo', 'Área / Setor', 'Nível de Acesso', 'Status Ativo']
+    
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
 
 def pagina_administracao():
-    st.header("⚙️ Administração")
-    st.info("Configurações de SLA e Facilitadores. (Será construído no Step 6 e 12)")
+    st.header("⚙️ Painel de Administração")
     
-    st.subheader("Simulação de Banco de Dados (Debug temporário)")
-    st.write("Usuários:", st.session_state['db_users'])
-    st.write("Solicitações Pendentes:", st.session_state['db_requests'])
+    # Bloqueio de Segurança (Somente Admin acessa)
+    if st.session_state['current_user']['role'] != 'Admin':
+        st.error("Acesso restrito: Somente administradores podem acessar esta página.")
+        return
+        
+    st.markdown("Bem-vindo ao painel de gestão de acessos e configurações.")
+    
+    # CARTÃO 1: SOLICITAÇÕES PENDENTES
+    st.subheader("📝 Solicitações de Acesso (Pendentes)")
+    pendentes = [req for req in st.session_state['db_requests'] if req['status'] == 'pendente']
+    
+    if not pendentes:
+        st.success("Nenhuma solicitação de acesso pendente no momento.")
+    else:
+        for req in pendentes:
+            with st.expander(f"📌 {req['nome']} ({req['login']}) - {req['area']}", expanded=True):
+                st.write(f"**Motivo:** {req['motivo']}")
+                st.write(f"**Data da solicitação:** {req['data']}")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    if st.button("✅ Aprovar", key=f"apr_{req['id']}", type="primary"):
+                        aprovar_solicitacao(req['id'])
+                        st.success(f"Aprovado! Atualize a página.")
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Rejeitar", key=f"rej_{req['id']}"):
+                        rejeitar_solicitacao(req['id'])
+                        st.warning(f"Rejeitado! Atualize a página.")
+                        st.rerun()
+                        
+    st.markdown("---")
+    
+    # CARTÃO 2: HISTÓRICO DE SOLICITAÇÕES
+    st.subheader("📜 Histórico de Solicitações")
+    historico = [req for req in st.session_state['db_requests'] if req['status'] != 'pendente']
+    
+    if historico:
+        df_hist = pd.DataFrame(historico)
+        df_hist = df_hist[['nome', 'login', 'area', 'status', 'data']]
+        df_hist.columns = ['Nome', 'Usuário', 'Área', 'Status', 'Data']
+        
+        # Função para colorir status
+        def colorir_status(val):
+            color = 'green' if val == 'aprovado' else 'red'
+            return f'color: {color}; font-weight: bold;'
+            
+        st.dataframe(df_hist.style.applymap(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum histórico disponível.")
 
 # ==========================================
 # 7. CONTROLADOR PRINCIPAL (ROTEADOR)
@@ -242,15 +317,16 @@ def main():
         render_header()
         pagina_atual = render_sidebar()
         
-        if pagina_atual == "Dashboard":
+        # Navegação baseada na string limpa de emojis
+        if "Dashboard" in pagina_atual:
             pagina_dashboard()
-        elif pagina_atual == "Problemas":
+        elif "Problemas" in pagina_atual:
             pagina_problemas()
-        elif pagina_atual == "Minhas Ações":
+        elif "Ações" in pagina_atual:
             pagina_acoes()
-        elif pagina_atual == "Colaboradores":
+        elif "Colaboradores" in pagina_atual:
             pagina_colaboradores()
-        elif pagina_atual == "Administração":
+        elif "Administração" in pagina_atual:
             pagina_administracao()
 
 if __name__ == "__main__":
