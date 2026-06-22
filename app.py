@@ -20,6 +20,7 @@ def inicializar_banco():
         st.session_state['db_users'] = {
             "roberto": {
                 "nome": "Roberto",
+                "email": "roberto@weg.net",
                 "senha": "WEG2026", 
                 "area": "Almoxarifado - WEN SZO",
                 "role": "Admin", 
@@ -75,22 +76,20 @@ def aprovar_solicitacao(req_id):
     for req in st.session_state['db_requests']:
         if req['id'] == req_id:
             req['status'] = 'aprovado'
-            
-            # Extrai o usuário (ex: joao.silva@weg.net -> joao.silva)
             email_completo = req['email'].strip().lower()
             login_extraido = email_completo.split('@')[0]
             
             st.session_state['db_users'][login_extraido] = {
                 "nome": req['nome'],
+                "email": email_completo,
                 "senha": "WEG2026",
-                "area": "A definir", # A área será editada depois pelo admin
+                "area": "A definir", 
                 "role": "User", 
                 "ativo": True
             }
             break
 
 def rejeitar_solicitacao(req_id):
-    """Rejeita a solicitação de acesso"""
     for req in st.session_state['db_requests']:
         if req['id'] == req_id:
             req['status'] = 'rejeitado'
@@ -113,7 +112,6 @@ def render_login():
         
         aba_login, aba_solicitar, aba_reset = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso", "🔑 Esqueci a Senha"])
         
-        # ABA 1: ENTRAR
         with aba_login:
             with st.form("form_login"):
                 usuario_login = st.text_input("Usuário WEG")
@@ -126,7 +124,6 @@ def render_login():
                     else:
                         st.error("Usuário ou senha incorretos, ou cadastro inativo.")
         
-        # ABA 2: SOLICITAR ACESSO (Simplificado)
         with aba_solicitar:
             with st.form("form_solicitacao"):
                 req_nome = st.text_input("Nome Completo")
@@ -147,7 +144,6 @@ def render_login():
                     else:
                         st.warning("Preencha todos os campos obrigatórios.")
                         
-        # ABA 3: ESQUECI A SENHA
         with aba_reset:
             st.info("Informe seu usuário para redefinir a senha de volta para o padrão (WEG2026).")
             with st.form("form_reset"):
@@ -238,19 +234,114 @@ def pagina_acoes():
     st.info("Lista de ações onde você é o responsável. (Será construído no Step 9)")
 
 def pagina_colaboradores():
-    st.header("👥 Base de Colaboradores")
-    st.markdown("Lista oficial de todos os colaboradores com acesso ao sistema (Aprovados).")
+    st.header("👥 Gestão de Colaboradores")
     
-    # Transforma o dict de usuários em uma tabela bonita usando Pandas
-    df_users = pd.DataFrame.from_dict(st.session_state['db_users'], orient='index')
+    is_admin = st.session_state['current_user']['role'] == 'Admin'
     
-    if not df_users.empty:
-        # Reordenando as colunas e traduzindo para exibição
-        df_display = df_users[['nome', 'area', 'role', 'ativo']].copy()
-        df_display.columns = ['Nome Completo', 'Área / Setor', 'Nível de Acesso', 'Status Ativo']
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    # Se for Admin, mostra as 3 abas de gestão. Se não, só a lista.
+    if is_admin:
+        tab1, tab2, tab3 = st.tabs(["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"])
     else:
-        st.warning("Nenhum usuário cadastrado.")
+        tab1, = st.tabs(["📋 Lista de Colaboradores"])
+    
+    # ABA 1: LISTA (Visível para todos)
+    with tab1:
+        # Prepara os dados para exibição
+        lista_usuarios = []
+        for login, dados in st.session_state['db_users'].items():
+            u = dados.copy()
+            u['login'] = login
+            lista_usuarios.append(u)
+            
+        df_users = pd.DataFrame(lista_usuarios)
+        
+        if not df_users.empty:
+            df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
+            df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
+            
+            # Função para colorir status
+            def colorir_ativo(val):
+                if isinstance(val, bool):
+                    color = 'green' if val else 'red'
+                    texto = "Ativo" if val else "Inativo"
+                    return f'color: {color}; font-weight: bold;'
+                return ''
+                
+            st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
+        else:
+            st.warning("Nenhum usuário cadastrado.")
+
+    # ABAS RESTRITAS PARA ADMIN
+    if is_admin:
+        # ABA 2: ADICIONAR NOVO
+        with tab2:
+            st.markdown("Adicione um colaborador manualmente ao sistema. A senha inicial será `WEG2026`.")
+            with st.form("form_add_colab"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    novo_nome = st.text_input("Nome Completo*")
+                    novo_email = st.text_input("E-mail (@weg.net)*")
+                with col2:
+                    novo_area = st.text_input("Área / Setor*")
+                    novo_papel = st.selectbox("Nível de Acesso*", ["User", "Facilitador", "Admin"])
+                
+                btn_add = st.form_submit_button("Salvar Colaborador")
+                if btn_add:
+                    if novo_nome and novo_email and novo_area:
+                        novo_login = novo_email.strip().lower().split('@')[0]
+                        if novo_login in st.session_state['db_users']:
+                            st.error(f"O usuário '{novo_login}' já existe no sistema!")
+                        else:
+                            st.session_state['db_users'][novo_login] = {
+                                "nome": novo_nome,
+                                "email": novo_email,
+                                "senha": "WEG2026",
+                                "area": novo_area,
+                                "role": novo_papel,
+                                "ativo": True
+                            }
+                            st.success(f"Colaborador {novo_nome} adicionado com sucesso! Atualize a página.")
+                    else:
+                        st.warning("Preencha todos os campos obrigatórios.")
+                        
+        # ABA 3: EDITAR / DESATIVAR
+        with tab3:
+            st.markdown("Selecione um usuário abaixo para editar suas informações ou desativar o seu acesso.")
+            
+            # Pega lista de logins
+            logins_disponiveis = list(st.session_state['db_users'].keys())
+            
+            usuario_selecionado = st.selectbox("Selecione o Usuário:", logins_disponiveis)
+            
+            if usuario_selecionado:
+                user_data = st.session_state['db_users'][usuario_selecionado]
+                
+                with st.form("form_edit_colab"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        edit_nome = st.text_input("Nome Completo", value=user_data['nome'])
+                        edit_email = st.text_input("E-mail", value=user_data.get('email', f"{usuario_selecionado}@weg.net"))
+                        edit_area = st.text_input("Área / Setor", value=user_data['area'])
+                    with col2:
+                        edit_papel = st.selectbox("Nível de Acesso", ["User", "Facilitador", "Admin"], index=["User", "Facilitador", "Admin"].index(user_data['role']))
+                        edit_ativo = st.checkbox("Colaborador Ativo (Acesso Liberado)", value=user_data['ativo'])
+                    
+                    st.info("Nota: A senha do usuário não pode ser alterada aqui. Caso ele esqueça, peça para usar a aba 'Esqueci a Senha' no login.")
+                    
+                    btn_edit = st.form_submit_button("Salvar Alterações")
+                    if btn_edit:
+                        # Trava de segurança: O Admin não pode desativar a si mesmo ou tirar seu próprio admin
+                        if usuario_selecionado == st.session_state['current_user']['login'] and (not edit_ativo or edit_papel != "Admin"):
+                            st.error("Segurança: Você não pode desativar seu próprio usuário ou remover seu status de Admin.")
+                        else:
+                            st.session_state['db_users'][usuario_selecionado].update({
+                                "nome": edit_nome,
+                                "email": edit_email,
+                                "area": edit_area,
+                                "role": edit_papel,
+                                "ativo": edit_ativo
+                            })
+                            st.success(f"Dados de '{usuario_selecionado}' atualizados com sucesso! Atualize a página.")
 
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
@@ -261,7 +352,6 @@ def pagina_administracao():
         
     st.markdown("Bem-vindo ao painel de gestão de acessos e configurações.")
     
-    # CARTÃO 1: SOLICITAÇÕES PENDENTES
     st.subheader("📝 Solicitações de Acesso (Pendentes)")
     pendentes = [req for req in st.session_state['db_requests'] if req['status'] == 'pendente']
     
@@ -276,7 +366,7 @@ def pagina_administracao():
                 with col1:
                     if st.button("✅ Aprovar", key=f"apr_{req['id']}", type="primary"):
                         aprovar_solicitacao(req['id'])
-                        st.success(f"Aprovado! Atualize a página.")
+                        st.success(f"Aprovado! Vá em 'Colaboradores' para editar a área se desejar.")
                         st.rerun()
                 with col2:
                     if st.button("❌ Rejeitar", key=f"rej_{req['id']}"):
@@ -286,7 +376,6 @@ def pagina_administracao():
                         
     st.markdown("---")
     
-    # CARTÃO 2: HISTÓRICO DE SOLICITAÇÕES
     st.subheader("📜 Histórico de Solicitações")
     historico = [req for req in st.session_state['db_requests'] if req['status'] != 'pendente']
     
