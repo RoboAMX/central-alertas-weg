@@ -20,7 +20,7 @@ def inicializar_banco():
         st.session_state['db_users'] = {
             "roberto": {
                 "nome": "Roberto",
-                "email": "roberto@weg.net",
+                "email": "robertoa@weg.net",
                 "senha": "WEG2026", 
                 "area": "Almoxarifado - WEN SZO",
                 "role": "Admin", 
