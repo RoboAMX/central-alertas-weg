@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 2. CONEXÃO COM BANCO DE DADOS (SUPABASE)
+# 2. CONEXÃO COM BANCO DE DADOS E MEMÓRIA
 # ==========================================
 @st.cache_resource
 def init_connection() -> Client:
@@ -38,7 +38,7 @@ if 'menu_index' not in st.session_state: st.session_state['menu_index'] = 0
 if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 
 # ==========================================
-# 3. FUNÇÕES DE AUTENTICAÇÃO, BD E E-MAIL
+# 3. FUNÇÕES DE AUTENTICAÇÃO E BD
 # ==========================================
 def fazer_login(usuario_login, senha):
     usuario_login = usuario_login.strip().lower() 
@@ -64,36 +64,21 @@ def fazer_logout():
     st.session_state['menu_index'] = 0
     st.rerun()
 
-def aprovar_solicitacao(req_id, req_email, req_nome):
-    supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
-    login_extraido = req_email.strip().lower().split('@')[0]
-    check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
-    if len(check.data) == 0:
-        supabase.table("usuarios").insert({
-            "login": login_extraido, "nome": req_nome, "email": req_email,
-            "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True
-        }).execute()
-        
-        # Envia email de boas vindas
-        enviar_email(req_email, "Acesso Aprovado - Central de Alertas", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Seu usuário é <b>{login_extraido}</b> e sua senha temporária é <b>WEG2026</b>.<br>Acesse o sistema e troque sua senha imediatamente.")
-
-def rejeitar_solicitacao(req_id):
-    supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
-
-# --- MOTOR DE E-MAIL ---
+# --- MOTOR DE E-MAIL (SEM SILENCIADOR) ---
 def enviar_email(destinatario, assunto, mensagem_html):
     try:
         remetente = st.secrets.get("EMAIL_SENDER", "")
         senha = st.secrets.get("EMAIL_PASSWORD", "")
         
-        if not remetente or not senha: return # Pula silenciosamente se não houver config
+        if not remetente or not senha: 
+            st.warning("E-mail não enviado: As chaves EMAIL_SENDER e EMAIL_PASSWORD não estão configuradas nos Secrets.")
+            return
             
         msg = MIMEMultipart()
         msg['From'] = remetente
         msg['To'] = destinatario
         msg['Subject'] = assunto
         
-        # Template HTML corporativo WEG (Azul)
         html_completo = f"""
         <div style="font-family: Arial, sans-serif; color: #333; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
             <div style="background-color: #00579D; padding: 20px; text-align: center; color: white;">
@@ -115,21 +100,27 @@ def enviar_email(destinatario, assunto, mensagem_html):
         server.send_message(msg)
         server.quit()
     except Exception as e:
-        print(f"Erro Email: {e}")
+        st.error(f"Erro ao tentar enviar o E-mail pelo Gmail: {e}")
 
 # --- ENVIAR NOTIFICAÇÃO (IN-APP + EMAIL) ---
 def enviar_notificacao(user_login, titulo, corpo, link=""):
+    # 1. Tenta salvar no BD para o Sino
     try:
-        # 1. Salva no BD para o Sino
-        supabase.table("notifications").insert({"user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False}).execute()
+        supabase.table("notifications").insert({
+            "user_login": user_login, "titulo": titulo, "corpo": corpo, "link": link, "lida": False
+        }).execute()
+    except Exception as e:
+        st.warning(f"Erro no Supabase (Notificações): Verifique se a tabela 'notifications' está destrancada. Erro: {e}")
         
-        # 2. Dispara e-mail para o usuário
+    # 2. Tenta disparar e-mail para o usuário
+    try:
         resp = supabase.table("usuarios").select("email").eq("login", user_login).execute()
         if len(resp.data) > 0:
             email_destino = resp.data[0]['email']
             html_msg = f"<p>Olá,</p><p>Você tem uma nova notificação no sistema:</p><div style='background-color: white; padding: 15px; border-left: 4px solid #00579D; margin: 20px 0;'><strong>{titulo}</strong><br><br>{corpo}</div><p>Acesse o painel para verificar.</p>"
             enviar_email(email_destino, f"[WEG Alertas] {titulo}", html_msg)
-    except: pass
+    except Exception as e:
+        st.warning(f"Erro ao buscar email do usuário: {e}")
 
 # ==========================================
 # 4. TELAS DE LOGIN E RESET
@@ -291,14 +282,17 @@ def pagina_problemas():
                 if titulo and descricao:
                     dias_sla = {"Urgente": 1, "Normal": 3, "Baixo": 5}
                     prazo = datetime.datetime.now() + datetime.timedelta(days=dias_sla[prioridade])
-                    supabase.table("problemas").insert({
-                        "titulo": titulo, "descricao": descricao, "area": area_prob,
-                        "prioridade": prioridade, "status": "aberto", "criado_por": st.session_state['current_user']['login'],
-                        "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S")
-                    }).execute()
-                    st.success("✅ Alerta registrado com sucesso!")
-                    st.rerun()
+                    try:
+                        supabase.table("problemas").insert({
+                            "titulo": titulo, "descricao": descricao, "area": area_prob,
+                            "prioridade": prioridade, "status": "aberto",
+                            "criado_por": st.session_state['current_user']['login'],
+                            "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "sla_due_at": prazo.strftime("%Y-%m-%d %H:%M:%S")
+                        }).execute()
+                        st.success("✅ Alerta registrado com sucesso!")
+                        st.rerun()
+                    except Exception as e: st.warning(f"Erro: {str(e)}")
                 else: st.warning("Título e Descrição obrigatórios.")
 
     with tab_detalhe:
@@ -422,6 +416,11 @@ def pagina_colaboradores():
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     if st.session_state['current_user']['role'] != 'Admin': st.error("Acesso restrito."); return
+    
+    # ATUALIZAR CONFIGURAÇÃO DE EMAIL AQUI
+    def update_email_settings(sender, pwd):
+        st.info("Para habilitar e-mails, adicione as chaves EMAIL_SENDER e EMAIL_PASSWORD em Manage App -> Settings -> Secrets do Streamlit Cloud.")
+        
     colA, colB = st.columns([1, 1])
     with colA:
         st.subheader("👨‍💼 Facilitadores")
