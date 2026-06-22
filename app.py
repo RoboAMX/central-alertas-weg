@@ -197,12 +197,128 @@ def render_sidebar():
 # 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
-    st.header("Dashboard")
+    st.header("📊 Dashboard")
     st.info("Visão geral dos alertas, problemas e KPIs. (Step 11)")
 
 def pagina_problemas():
-    st.header("Gestão de Problemas")
-    st.info("Abertura e listagem de problemas. (Step 7)")
+    st.header("⚠️ Gestão de Problemas e Alertas")
+    
+    # Pega áreas disponíveis para o formulário
+    users_db = supabase.table("usuarios").select("area").execute().data
+    areas = list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir']))
+    areas.sort()
+    if not areas:
+        areas = ["Geral"]
+
+    tab_lista, tab_novo, tab_detalhe = st.tabs(["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Detalhes"])
+    
+    # ABA 1: LISTAGEM
+    with tab_lista:
+        # Filtros
+        colF1, colF2, colF3 = st.columns(3)
+        with colF1:
+            filtro_status = st.selectbox("Status", ["Todos", "aberto", "em_analise", "aprovado", "rejeitado", "solucionado"])
+        with colF2:
+            filtro_prio = st.selectbox("Prioridade", ["Todas", "Urgente", "Normal", "Baixo"])
+            
+        problemas_db = supabase.table("problemas").select("*").execute().data
+        
+        if problemas_db:
+            df_prob = pd.DataFrame(problemas_db)
+            
+            # Aplicar filtros
+            if filtro_status != "Todos":
+                df_prob = df_prob[df_prob['status'] == filtro_status]
+            if filtro_prio != "Todas":
+                df_prob = df_prob[df_prob['prioridade'] == filtro_prio]
+                
+            if not df_prob.empty:
+                df_display = df_prob[['id', 'titulo', 'area', 'prioridade', 'status', 'criado_em', 'sla_due_at']].copy()
+                
+                # Formatando datas
+                df_display['criado_em'] = pd.to_datetime(df_display['criado_em']).dt.strftime('%d/%m/%Y %H:%M')
+                df_display['sla_due_at'] = pd.to_datetime(df_display['sla_due_at']).dt.strftime('%d/%m/%Y %H:%M')
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                st.caption("Para ver os detalhes ou aprovar um alerta, anote o ID e vá na aba 'Detalhes'.")
+            else:
+                st.info("Nenhum alerta encontrado com os filtros atuais.")
+        else:
+            st.info("Nenhum problema cadastrado no sistema ainda.")
+
+    # ABA 2: NOVO ALERTA
+    with tab_novo:
+        st.markdown("Preencha as informações para registrar um novo alerta ou oportunidade de melhoria.")
+        with st.form("form_novo_prob"):
+            titulo = st.text_input("Título do Alerta / Problema*")
+            descricao = st.text_area("Descrição detalhada*")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                area_prob = st.selectbox("Área afetada*", areas)
+            with col2:
+                prioridade = st.selectbox("Prioridade*", ["Urgente", "Normal", "Baixo"])
+                
+            anexo = st.file_uploader("Anexar Evidência (Imagem, PDF, Excel)", type=['png','jpg','pdf','xlsx'])
+            
+            if st.form_submit_button("Abrir Alerta", type="primary"):
+                if titulo and descricao:
+                    # Lógica simples de SLA (Simulada para depois puxar do Admin)
+                    dias_sla = {"Urgente": 1, "Normal": 3, "Baixo": 5}
+                    prazo = datetime.datetime.now() + datetime.timedelta(days=dias_sla[prioridade])
+                    
+                    nome_anexo = anexo.name if anexo else None
+                    
+                    supabase.table("problemas").insert({
+                        "titulo": titulo,
+                        "descricao": descricao,
+                        "area": area_prob,
+                        "prioridade": prioridade,
+                        "status": "aberto",
+                        "criado_por": st.session_state['current_user']['login'],
+                        "criado_em": datetime.datetime.now().isoformat(),
+                        "sla_due_at": prazo.isoformat(),
+                        "anexo": nome_anexo
+                    }).execute()
+                    
+                    st.success("✅ Alerta registrado com sucesso! O Facilitador da área será notificado.")
+                    st.rerun()
+                else:
+                    st.warning("O Título e a Descrição são obrigatórios.")
+
+    # ABA 3: DETALHES
+    with tab_detalhe:
+        if not problemas_db:
+            st.info("Não há alertas para detalhar.")
+        else:
+            opcoes_ids = [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
+            id_selecionado = st.selectbox("Selecione o Alerta para ver detalhes:", [""] + opcoes_ids)
+            
+            if id_selecionado != "":
+                id_real = int(id_selecionado.split(" - ")[0])
+                alerta = next((p for p in problemas_db if p['id'] == id_real), None)
+                
+                if alerta:
+                    st.markdown(f"### #{alerta['id']} - {alerta['titulo']}")
+                    st.caption(f"Criado por: {alerta['criado_por']} em {alerta['criado_em'][:16].replace('T', ' ')}")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Área", alerta['area'])
+                    c2.metric("Prioridade", alerta['prioridade'])
+                    c3.metric("Status", alerta['status'].upper())
+                    
+                    st.markdown("**Descrição:**")
+                    st.info(alerta['descricao'])
+                    
+                    if alerta['anexo']:
+                        st.markdown(f"📎 **Anexo:** `{alerta['anexo']}`")
+                        
+                    st.markdown(f"⏳ **Prazo de Resolução (SLA):** {alerta['sla_due_at'][:16].replace('T', ' ')}")
+                    
+                    # (O Passo 8 vai colocar os botões de Aprovar/Rejeitar aqui dentro!)
+                    st.markdown("---")
+                    st.write("*A área de aprovação e ações corretivas será habilitada no próximo passo.*")
+
 
 def pagina_acoes():
     st.header("Minhas Ações Corretivas")
@@ -298,25 +414,21 @@ def pagina_administracao():
         return
         
     users_db = supabase.table("usuarios").select("*").execute().data
-    
     colA, colB = st.columns([1, 1])
     
     with colA:
         st.subheader("👨‍💼 Facilitadores por Área")
-        st.markdown("Defina quem aprova os problemas em cada área.")
-        
         areas = list(set([u['area'] for u in users_db if u['area'] and u['area'] != 'A definir']))
         areas.sort()
         
         if not areas:
-            st.info("Cadastre as áreas dos usuários primeiro na aba Colaboradores.")
+            st.info("Cadastre as áreas na aba Colaboradores.")
         else:
             fac_db = supabase.table("area_facilitadores").select("*").execute().data
             fac_map = {f['area']: f['facilitador_login'] for f in fac_db}
             
             with st.form("form_facilitadores"):
                 area_selecionada = st.selectbox("1. Selecione a Área", areas)
-                
                 active_users = [u for u in users_db if u['ativo']]
                 user_options = ["Nenhum"] + [f"{u['nome']} ({u['login']})" for u in active_users]
                 
@@ -325,8 +437,7 @@ def pagina_administracao():
                 if current_fac:
                     for i, opt in enumerate(user_options):
                         if f"({current_fac})" in opt:
-                            idx = i
-                            break
+                            idx = i; break
                             
                 novo_fac = st.selectbox("2. Selecione o Facilitador", user_options, index=idx)
                 
@@ -335,27 +446,18 @@ def pagina_administracao():
                         supabase.table("area_facilitadores").delete().eq("area", area_selecionada).execute()
                     else:
                         fac_login = novo_fac.split("(")[-1].replace(")", "")
+                        supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_login}).execute()
                         
-                        # NOVO CÓDIGO BULLETPROOF (UPSERT)
-                        # Ele insere se não existir, ou atualiza se já existir, em 1 única linha!
-                        supabase.table("area_facilitadores").upsert({
-                            "area": area_selecionada, 
-                            "facilitador_login": fac_login
-                        }).execute()
-                        
-                        # Promove a Facilitador se for User comum
                         usr = next((u for u in active_users if u['login'] == fac_login), None)
                         if usr and usr['role'] == 'User':
                             supabase.table("usuarios").update({"role": "Facilitador"}).eq("login", fac_login).execute()
-                            
-                    st.success("Facilitador salvo com sucesso!")
+                    st.success("Facilitador salvo!")
                     st.rerun()
 
     with colB:
-        st.subheader("📝 Solicitações (Pendentes)")
+        st.subheader("📝 Solicitações Pendentes")
         reqs_db = supabase.table("solicitacoes").select("*").execute().data
         pendentes = [r for r in reqs_db if r['status'] == 'pendente']
-        
         if not pendentes:
             st.success("Nenhuma solicitação pendente.")
         else:
@@ -371,22 +473,6 @@ def pagina_administracao():
                         if st.button("❌ Rejeitar", key=f"rej_{req['id']}"):
                             rejeitar_solicitacao(req['id'])
                             st.rerun()
-                            
-    st.markdown("---")
-    st.subheader("📜 Histórico de Solicitações")
-    historico = [r for r in reqs_db if r['status'] != 'pendente']
-    
-    if historico:
-        df_hist = pd.DataFrame(historico)[['nome', 'email', 'status', 'data']]
-        df_hist.columns = ['Nome', 'E-mail', 'Status', 'Data']
-        def colorir_status(val):
-            return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
-        try:
-            st.dataframe(df_hist.style.map(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
-        except:
-            st.dataframe(df_hist.style.applymap(colorir_status, subset=['Status']), use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhum histórico.")
 
 # ==========================================
 # 7. ROTEADOR
