@@ -22,7 +22,7 @@ def inicializar_banco():
                 "nome": "Roberto",
                 "senha": "WEG2026", 
                 "area": "Almoxarifado - WEN SZO",
-                "role": "Admin", # Papéis: Admin, Facilitador, User
+                "role": "Admin", 
                 "ativo": True
             }
         }
@@ -71,15 +71,20 @@ def fazer_logout():
     st.rerun()
 
 def aprovar_solicitacao(req_id):
-    """Aprova acesso, cria o usuário e define senha WEG2026"""
+    """Aprova acesso, cria o usuário extraindo o login do email"""
     for req in st.session_state['db_requests']:
         if req['id'] == req_id:
             req['status'] = 'aprovado'
-            st.session_state['db_users'][req['login']] = {
+            
+            # Extrai o usuário (ex: joao.silva@weg.net -> joao.silva)
+            email_completo = req['email'].strip().lower()
+            login_extraido = email_completo.split('@')[0]
+            
+            st.session_state['db_users'][login_extraido] = {
                 "nome": req['nome'],
                 "senha": "WEG2026",
-                "area": req['area'],
-                "role": "User", # Entra como usuário comum por padrão
+                "area": "A definir", # A área será editada depois pelo admin
+                "role": "User", 
                 "ativo": True
             }
             break
@@ -121,23 +126,19 @@ def render_login():
                     else:
                         st.error("Usuário ou senha incorretos, ou cadastro inativo.")
         
-        # ABA 2: SOLICITAR ACESSO
+        # ABA 2: SOLICITAR ACESSO (Simplificado)
         with aba_solicitar:
             with st.form("form_solicitacao"):
                 req_nome = st.text_input("Nome Completo")
-                req_usuario = st.text_input("Usuário WEG pretendido")
-                req_area = st.text_input("Área/Setor")
-                req_motivo = st.text_area("Motivo da solicitação")
+                req_email = st.text_input("E-mail corporativo (@weg.net)")
                 btn_solicitar = st.form_submit_button("Enviar Solicitação", use_container_width=True)
                 
                 if btn_solicitar:
-                    if req_nome and req_usuario and req_area:
+                    if req_nome and req_email:
                         st.session_state['db_requests'].append({
                             "id": st.session_state['request_counter'],
                             "nome": req_nome,
-                            "login": req_usuario.strip().lower(),
-                            "area": req_area,
-                            "motivo": req_motivo,
+                            "email": req_email,
                             "status": "pendente",
                             "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         })
@@ -208,10 +209,7 @@ def render_sidebar():
         
     st.sidebar.markdown("### 🚨 Navegação")
     
-    # Adicionado ícones simulados para melhor visual
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
-    
-    # Lógica de seleção limpa e segura (Evita erro de Streamlit key)
     menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu)
     
     st.sidebar.markdown("---")
@@ -245,16 +243,18 @@ def pagina_colaboradores():
     
     # Transforma o dict de usuários em uma tabela bonita usando Pandas
     df_users = pd.DataFrame.from_dict(st.session_state['db_users'], orient='index')
-    # Reordenando as colunas e traduzindo para exibição
-    df_display = df_users[['nome', 'area', 'role', 'ativo']].copy()
-    df_display.columns = ['Nome Completo', 'Área / Setor', 'Nível de Acesso', 'Status Ativo']
     
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    if not df_users.empty:
+        # Reordenando as colunas e traduzindo para exibição
+        df_display = df_users[['nome', 'area', 'role', 'ativo']].copy()
+        df_display.columns = ['Nome Completo', 'Área / Setor', 'Nível de Acesso', 'Status Ativo']
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    else:
+        st.warning("Nenhum usuário cadastrado.")
 
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     
-    # Bloqueio de Segurança (Somente Admin acessa)
     if st.session_state['current_user']['role'] != 'Admin':
         st.error("Acesso restrito: Somente administradores podem acessar esta página.")
         return
@@ -269,8 +269,7 @@ def pagina_administracao():
         st.success("Nenhuma solicitação de acesso pendente no momento.")
     else:
         for req in pendentes:
-            with st.expander(f"📌 {req['nome']} ({req['login']}) - {req['area']}", expanded=True):
-                st.write(f"**Motivo:** {req['motivo']}")
+            with st.expander(f"📌 {req['nome']} - {req['email']}", expanded=True):
                 st.write(f"**Data da solicitação:** {req['data']}")
                 
                 col1, col2, col3, col4 = st.columns(4)
@@ -293,10 +292,9 @@ def pagina_administracao():
     
     if historico:
         df_hist = pd.DataFrame(historico)
-        df_hist = df_hist[['nome', 'login', 'area', 'status', 'data']]
-        df_hist.columns = ['Nome', 'Usuário', 'Área', 'Status', 'Data']
+        df_hist = df_hist[['nome', 'email', 'status', 'data']]
+        df_hist.columns = ['Nome', 'E-mail', 'Status', 'Data']
         
-        # Função para colorir status
         def colorir_status(val):
             color = 'green' if val == 'aprovado' else 'red'
             return f'color: {color}; font-weight: bold;'
@@ -317,7 +315,6 @@ def main():
         render_header()
         pagina_atual = render_sidebar()
         
-        # Navegação baseada na string limpa de emojis
         if "Dashboard" in pagina_atual:
             pagina_dashboard()
         elif "Problemas" in pagina_atual:
