@@ -111,7 +111,7 @@ def enviar_email(destinatario, assunto, mensagem_html):
         server.send_message(msg)
         server.quit()
     except Exception as e:
-        print(f"Erro Email: {e}") # Joga no terminal oculto
+        print(f"Erro Email: {e}")
 
 # --- ENVIAR NOTIFICAÇÃO (IN-APP + EMAIL) ---
 def enviar_notificacao(user_login, titulo, corpo, link=""):
@@ -241,8 +241,79 @@ def render_sidebar():
 # 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
-    st.header("📊 Dashboard")
-    st.info("Visão geral dos alertas, problemas e KPIs. (Step 11)")
+    st.header("📊 Dashboard de Performance")
+    
+    user_role = st.session_state['current_user']['role']
+    user_area = st.session_state['current_user']['area']
+    
+    if user_role == 'Admin':
+        st.markdown("*Visão Global (Modo Administrador)*")
+        probs_data = supabase.table("problemas").select("*").execute().data
+    else:
+        st.markdown(f"*Visão Filtrada: Área {user_area}*")
+        probs_data = supabase.table("problemas").select("*").eq("area", user_area).execute().data
+        
+    if not probs_data:
+        st.info("Nenhum dado disponível para compor o Dashboard no momento.")
+        return
+
+    # Processamento dos Dados
+    df = pd.DataFrame(probs_data)
+    df['criado_em'] = pd.to_datetime(df['criado_em'])
+    df['sla_due_at'] = pd.to_datetime(df['sla_due_at'])
+    hoje = datetime.datetime.now()
+
+    # Cálculo dos KPIs
+    abertos = len(df[df['status'] == 'aberto'])
+    em_andamento = len(df[df['status'] == 'aprovado'])
+    solucionados = len(df[df['status'] == 'solucionado'])
+    # Vencidos: Prazo ultrapassado e que não foi nem solucionado nem rejeitado
+    vencidos = len(df[(df['sla_due_at'] < hoje) & (~df['status'].isin(['solucionado', 'rejeitado']))])
+
+    # 1. CARDS SUPERIORES
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🚨 Abertos (Aguardando)", abertos)
+    col2.metric("⚙️ Em Andamento", em_andamento)
+    col3.metric("🔥 Vencidos (SLA)", vencidos, delta="Atenção!" if vencidos > 0 else "SLA no Prazo", delta_color="inverse")
+    col4.metric("✅ Solucionados", solucionados)
+
+    st.markdown("---")
+    
+    # 2. GRÁFICO E LISTA CRÍTICA
+    colA, colB = st.columns([1, 1])
+    
+    with colA:
+        st.subheader("📈 Alertas por Área")
+        df_area = df['area'].value_counts().reset_index()
+        df_area.columns = ['Área', 'Quantidade']
+        st.bar_chart(df_area.set_index('Área'), color="#00579D")
+
+    with colB:
+        st.subheader("🔥 Top Alertas Críticos")
+        st.caption("Filtra os alertas Urgentes/Vencidos que ainda não foram solucionados.")
+        
+        # Filtra os não concluídos
+        df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
+        
+        if not df_criticos.empty:
+            # Peso para prioridade (Urgente aparece primeiro)
+            peso_prio = {"Urgente": 1, "Normal": 2, "Baixo": 3}
+            df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
+            
+            # Ordena por prioridade e quem vence primeiro
+            df_criticos = df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10)
+            
+            df_display = df_criticos[['id', 'titulo', 'prioridade', 'status']].copy()
+            df_display.columns = ['ID', 'Problema', 'Prioridade', 'Status']
+            
+            # Formatação do Pandas
+            def color_critico(val):
+                return 'color: red; font-weight: bold;' if val == 'Urgente' else ''
+                
+            try: st.dataframe(df_display.style.map(color_critico, subset=['Prioridade']), use_container_width=True, hide_index=True)
+            except: st.dataframe(df_display.style.applymap(color_critico, subset=['Prioridade']), use_container_width=True, hide_index=True)
+        else:
+            st.success("Tudo sob controle! Nenhum alerta crítico pendente.")
 
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
@@ -418,7 +489,6 @@ def pagina_colaboradores():
 def pagina_administracao():
     st.header("⚙️ Painel de Administração")
     if st.session_state['current_user']['role'] != 'Admin': st.error("Acesso restrito."); return
-    
     colA, colB = st.columns([1, 1])
     with colA:
         st.subheader("👨‍💼 Facilitadores")
@@ -440,35 +510,20 @@ def pagina_administracao():
                         fac_log = novo_fac.split("(")[-1].replace(")", "")
                         supabase.table("area_facilitadores").upsert({"area": area_selecionada, "facilitador_login": fac_log}).execute()
                     st.rerun()
-
     with colB:
         st.subheader("📧 Teste de Conexão (E-mail)")
-        st.info("Verifica se as configurações do Gmail nos Secrets estão corretas.")
         if st.button("Enviar E-mail de Teste para Mim", use_container_width=True):
-            remetente = st.secrets.get("EMAIL_SENDER", "")
-            senha = st.secrets.get("EMAIL_PASSWORD", "")
-            
-            if not remetente or not senha:
-                st.error("❌ As chaves EMAIL_SENDER e/ou EMAIL_PASSWORD não foram encontradas ou estão vazias nos Secrets do Streamlit.")
+            remetente = st.secrets.get("EMAIL_SENDER", ""); senha = st.secrets.get("EMAIL_PASSWORD", "")
+            if not remetente or not senha: st.error("❌ Chaves vazias.")
             else:
                 try:
-                    server = smtplib.SMTP('smtp.gmail.com', 587)
-                    server.starttls()
-                    server.login(remetente, senha)
-                    
-                    # Tenta mandar um email para o próprio remetente como teste
+                    server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls(); server.login(remetente, senha)
                     msg = MIMEMultipart()
-                    msg['From'] = remetente
-                    msg['To'] = remetente
-                    msg['Subject'] = "[TESTE] Conexão WEG Alertas"
-                    msg.attach(MIMEText("Se você recebeu isso, a conexão com o Gmail está 100% perfeita!", 'plain'))
-                    
-                    server.send_message(msg)
-                    server.quit()
-                    st.success(f"✅ Conexão bem-sucedida! E-mail de teste enviado para a caixa: {remetente}")
-                except Exception as e:
-                    st.error(f"❌ Erro retornado pelo Google: {e}")
-                    st.markdown("**Dica:** O Google bloqueia senhas normais. Você precisa gerar uma 'Senha de App' lá nas configurações de segurança da sua conta Google.")
+                    msg['From'] = remetente; msg['To'] = remetente; msg['Subject'] = "[TESTE] Conexão WEG"
+                    msg.attach(MIMEText("Se você recebeu isso, a conexão com o Gmail está perfeita!", 'plain'))
+                    server.send_message(msg); server.quit()
+                    st.success(f"✅ E-mail enviado para: {remetente}")
+                except Exception as e: st.error(f"❌ Erro: {e}")
 
 # ==========================================
 # 7. ROTEADOR
