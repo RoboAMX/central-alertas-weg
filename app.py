@@ -103,7 +103,6 @@ def render_login():
         except: st.markdown("### [LOGO WEG]")
         st.markdown("<h2 style='color: #00579D;'>Central de Alertas</h2>", unsafe_allow_html=True)
         
-        # ABA DE ESQUECI A SENHA FOI REMOVIDA DAQUI (SEGURANÇA)
         aba_login, aba_solicitar = st.tabs(["🔐 Entrar", "📝 Solicitar Acesso"])
         
         with aba_login:
@@ -123,9 +122,7 @@ def render_login():
                         supabase.table("solicitacoes").insert({"nome": req_nome, "email": req_email, "status": "pendente", "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else: st.warning("Preencha todos os campos obrigatórios.")
-        
-        st.write("<br>", unsafe_allow_html=True)
-        st.caption("🔒 Caso tenha esquecido sua senha, solicite ao Administrador do sistema o reset da mesma.")
+        st.caption("🔒 Caso tenha esquecido sua senha, solicite ao Admin o reset.")
 
 def render_trocar_senha():
     col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -233,7 +230,6 @@ def pagina_dashboard():
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
     
-    # BUSCA LOCAIS OFICIAIS DO BANCO
     try: areas = [l['nome'] for l in supabase.table("locais").select("nome").order("nome").execute().data]
     except: areas = ["Geral"]
     
@@ -303,6 +299,8 @@ def pagina_problemas():
     elif aba_atual == "🔍 Sala de Controle (Detalhes e Fórum)":
         try:
             problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
+            users_all = supabase.table("usuarios").select("login, nome, ativo").execute().data
+            
             if problemas_db:
                 opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
                 idx_padrao = 0
@@ -353,26 +351,55 @@ def pagina_problemas():
                                                 enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"O alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", f"Problemas|{alerta['id']}")
                                                 st.rerun()
                             
-                            # AÇÕES CORRETIVAS (LÓGICA DE RAMIFICAÇÃO / DEPENDÊNCIA AQUI)
+                            # AÇÕES CORRETIVAS E TAREFAS (DELEGAÇÃO)
                             elif alerta['status'] in ['aprovado', 'solucionado']:
                                 st.markdown("#### ✅ Plano de Ações Corretivas")
                                 acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
-                                users_all = supabase.table("usuarios").select("login, nome, ativo").execute().data
                                 
                                 if acoes_db:
                                     for acao in acoes_db:
-                                        # Formata cor do Status na caixa expander
                                         cor_st = "🔴" if acao['status']=='bloqueada' else "🟠" if acao['status']=='liberada' else "🟢"
                                         texto_st = "BLOQUEADA (Aguardando anterior)" if acao['status']=='bloqueada' else "LIBERADA" if acao['status']=='liberada' else "SOLUCIONADA"
                                         
                                         with st.expander(f"{cor_st} Ação #{acao['id']}: {acao['descricao']} | Status: {texto_st}", expanded=True):
                                             logins_resp = [r['colaborador_login'] for r in supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", acao['id']).execute().data]
-                                            st.write(f"**Responsáveis:** {', '.join([u['nome'] for u in users_all if u['login'] in logins_resp])}")
+                                            st.write(f"**Responsáveis pela Ação:** {', '.join([u['nome'] for u in users_all if u['login'] in logins_resp])}")
                                             if acao.get('depende_de_id'): st.write(f"🔗 *Depende da conclusão da Ação #{acao['depende_de_id']}*")
                                             
-                                            if st.session_state['current_user']['role'] == 'Admin' or st.session_state['current_user']['login'] in logins_resp:
+                                            is_admin = st.session_state['current_user']['role'] == 'Admin'
+                                            is_action_resp = st.session_state['current_user']['login'] in logins_resp
+                                            
+                                            # --- GERENCIAMENTO DE TAREFAS (SUB-AÇÕES) ---
+                                            st.markdown("##### 📌 Tarefas Delegadas desta Ação")
+                                            try: tarefas_db = supabase.table("action_tasks").select("*").eq("action_id", acao['id']).execute().data
+                                            except: tarefas_db = []
+                                            
+                                            if tarefas_db:
+                                                for t in tarefas_db:
+                                                    resp_nome = next((u['nome'] for u in users_all if u['login'] == t['responsavel_login']), t['responsavel_login'])
+                                                    icone_t = "✅" if t['status'] == 'concluida' else "⏳"
+                                                    st.write(f"{icone_t} **{t['descricao']}** (Resp: {resp_nome})")
+                                            else:
+                                                st.caption("Nenhuma tarefa delegada.")
+
+                                            if is_admin or is_action_resp:
+                                                if acao['status'] != 'bloqueada':
+                                                    with st.popover("➕ Delegar Tarefa", use_container_width=True):
+                                                        st.write("Crie uma tarefa para alguém te ajudar nesta ação.")
+                                                        t_desc = st.text_input("O que deve ser feito?", key=f"tdesc_{acao['id']}")
+                                                        t_resp = st.selectbox("Responsável", [u['login'] for u in users_all if u['ativo']], format_func=lambda x: next(u['nome'] for u in users_all if u['login']==x), key=f"tresp_{acao['id']}")
+                                                        if st.button("Salvar Tarefa", key=f"tbtn_{acao['id']}", type="primary"):
+                                                            if t_desc:
+                                                                supabase.table("action_tasks").insert({"action_id": acao['id'], "descricao": t_desc, "responsavel_login": t_resp}).execute()
+                                                                enviar_notificacao(t_resp, "Nova Tarefa Delegada 📌", f"Você recebeu uma tarefa na Ação #{acao['id']}: '{t_desc}'", "Minhas Ações")
+                                                                st.rerun()
+                                                
+                                            st.markdown("---")
+                                            
+                                            # --- ATUALIZAÇÃO DA AÇÃO EM SI ---
+                                            if is_admin or is_action_resp:
                                                 if acao['status'] == 'bloqueada':
-                                                    st.error("🔒 Esta ação está bloqueada aguardando a conclusão da ação anterior.")
+                                                    st.error("🔒 Ação bloqueada aguardando conclusão da anterior.")
                                                 else:
                                                     with st.form(f"f_acao_{acao['id']}"):
                                                         novo_status = st.selectbox("Status", ["liberada", "solucionada"], index=["liberada", "solucionada"].index(acao['status']))
@@ -381,22 +408,19 @@ def pagina_problemas():
                                                         if st.form_submit_button("Atualizar Ação"):
                                                             supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
                                                             
-                                                            # CASCATA DE LIBERAÇÃO: Se concluiu essa, libera as que dependem dela!
                                                             if novo_status == 'solucionada' and acao['status'] != 'solucionada':
                                                                 deps = supabase.table("problem_actions").select("id, descricao").eq("depende_de_id", acao['id']).execute().data
                                                                 if deps:
                                                                     for d in deps:
                                                                         supabase.table("problem_actions").update({"status": "liberada"}).eq("id", d['id']).execute()
-                                                                        # Notifica AGORA os responsáveis da ação liberada
                                                                         resps_d = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", d['id']).execute().data
                                                                         for r in resps_d:
-                                                                            enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior foi concluída. Agora é com você: '{d['descricao']}'", "Minhas Ações")
-                                                                            
+                                                                            enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
                                                                 enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
                                                             st.rerun()
-                                            else: st.info("Apenas responsáveis editam."); st.write(f"Obs: {acao['observacao']}")
+                                            else: st.info("Apenas os responsáveis editam a Ação.")
 
-                                st.markdown("##### ➕ Adicionar Nova Ação")
+                                st.markdown("##### ➕ Adicionar Nova Ação Principal")
                                 with st.form("form_nova_acao"):
                                     desc_acao = st.text_input("O que deve ser feito?")
                                     colP, colD = st.columns(2)
@@ -406,12 +430,11 @@ def pagina_problemas():
                                         if acoes_db: opcoes_dep.update({str(a['id']): f"#{a['id']} - {a['descricao'][:30]}" for a in acoes_db})
                                         dep_selecionada = st.selectbox("Depende de qual ação?", list(opcoes_dep.keys()), format_func=lambda x: opcoes_dep[x])
                                         
-                                    selecionados = st.multiselect("Responsáveis", [u['login'] for u in users_all if u['ativo']], format_func=lambda x: next(u['nome'] for u in users_all if u['login']==x))
+                                    selecionados = st.multiselect("Responsáveis pela Ação", [u['login'] for u in users_all if u['ativo']], format_func=lambda x: next(u['nome'] for u in users_all if u['login']==x))
                                     
                                     if st.form_submit_button("Salvar Ação"):
                                         if desc_acao and selecionados:
                                             status_inicial = "bloqueada" if dep_selecionada != "" else "liberada"
-                                            
                                             res = supabase.table("problem_actions").insert({
                                                 "problem_id": alerta['id'], "descricao": desc_acao, "status": status_inicial, 
                                                 "prazo": str(prazo_acao), "criado_por": st.session_state['current_user']['login'],
@@ -420,10 +443,9 @@ def pagina_problemas():
                                             
                                             for resp_log in selecionados:
                                                 supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
-                                                # Só notifica se não estiver bloqueada
                                                 if status_inicial == "liberada":
                                                     enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
-                                            st.success("Ação salva com ramificação correta!"); st.rerun()
+                                            st.success("Ação salva!"); st.rerun()
                                         else: st.error("Preencha descrição e responsáveis.")
 
                         # --- LADO DIREITO: FÓRUM/CHAT ---
@@ -436,7 +458,7 @@ def pagina_problemas():
                                 comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
                                 if comments_db:
                                     for c in comments_db:
-                                        usr_nome = next((u['nome'] for u in supabase.table("usuarios").select("login, nome").execute().data if u['login'] == c['autor']), c['autor'])
+                                        usr_nome = next((u['nome'] for u in users_all if u['login'] == c['autor']), c['autor'])
                                         is_me = c['autor'] == st.session_state['current_user']['login']
                                         with st.chat_message("user" if is_me else "assistant", avatar="🧑‍💻" if is_me else "💡"):
                                             st.markdown(f"**{'Você' if is_me else usr_nome}** *({c['criado_em'][:16].replace('T', ' ')})*")
@@ -452,7 +474,7 @@ def pagina_problemas():
 
                             with st.form(key=f"form_chat_{alerta['id']}", clear_on_submit=True):
                                 txt_msg = st.text_input("Escreva seu insight aqui...")
-                                notificar_email = st.checkbox("🔔 Avisar autor por e-mail", value=False)
+                                notificar_email = st.checkbox("🔔 Avisar autor", value=False)
                                 if st.form_submit_button("Enviar Mensagem") and txt_msg:
                                     final_msg = f"> **Resp:** _{st.session_state[reply_key]['texto']}_\n\n{txt_msg}" if st.session_state[reply_key] else txt_msg
                                     supabase.table("problem_comments").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "texto": final_msg}).execute()
@@ -463,13 +485,39 @@ def pagina_problemas():
         except Exception as e: st.error(f"Erro na Sala de Controle: {e}")
 
 def pagina_acoes():
-    st.header("✅ Minhas Ações Corretivas")
-    st.markdown("Ações atribuídas a você (Apenas as que não estão bloqueadas).")
+    st.header("✅ Minhas Ações e Tarefas")
+    meu_login = st.session_state['current_user']['login']
+    
+    # 1. MOSTRA TAREFAS DELEGADAS PARA MIM
+    st.subheader("📌 Minhas Tarefas (Sub-ações)")
     try:
-        meu_login = st.session_state['current_user']['login']
+        minhas_tarefas = supabase.table("action_tasks").select("*").eq("responsavel_login", meu_login).execute().data
+        if not minhas_tarefas:
+            st.info("Você não tem nenhuma tarefa delegada.")
+        else:
+            for t in minhas_tarefas:
+                cor_t = "🟢" if t['status'] == 'concluida' else "⏳"
+                with st.expander(f"{cor_t} Tarefa: {t['descricao']}", expanded=(t['status'] != 'concluida')):
+                    st.write(f"**Origem:** Ação Corretiva #{t['action_id']}")
+                    if t['status'] != 'concluida':
+                        if st.button("Marcar Tarefa como Concluída", key=f"tconclui_{t['id']}", type="primary"):
+                            supabase.table("action_tasks").update({"status": "concluida"}).eq("id", t['id']).execute()
+                            # Avisa o dono da Ação que a tarefa foi feita
+                            acao_pai = supabase.table("problem_actions").select("descricao, criado_por").eq("id", t['action_id']).execute().data[0]
+                            enviar_notificacao(acao_pai['criado_por'], "Tarefa Concluída ✅", f"Sua equipe concluiu a tarefa '{t['descricao']}' na Ação '{acao_pai['descricao']}'.")
+                            st.rerun()
+                    else:
+                        st.success("Esta tarefa já foi concluída por você!")
+    except Exception as e: st.error(f"Erro nas tarefas: {e}")
+
+    st.markdown("---")
+    
+    # 2. MOSTRA AÇÕES PRINCIPAIS ONDE SOU RESPONSÁVEL
+    st.subheader("🛠️ Minhas Ações Principais")
+    try:
         resp_db = supabase.table("problem_action_responsibles").select("action_id").eq("colaborador_login", meu_login).execute().data
         if not resp_db: 
-            st.success("🎉 Sua caixa está limpa!")
+            st.info("Você não é responsável por nenhuma Ação Principal no momento.")
         else:
             action_ids = [r['action_id'] for r in resp_db]
             acoes_db = supabase.table("problem_actions").select("*").in_("id", action_ids).execute().data
@@ -477,11 +525,10 @@ def pagina_acoes():
                 probs_db = supabase.table("problemas").select("id, titulo").execute().data
                 prob_map = {p['id']: p['titulo'] for p in probs_db}
                 
-                # Exibe apenas ações liberadas ou solucionadas (esconde as bloqueadas do usuário)
                 acoes_filtradas = [a for a in acoes_db if a['status'] != 'bloqueada']
                 
                 if not acoes_filtradas:
-                    st.info("Você possui ações, mas elas estão BLOQUEADAS aguardando a conclusão de etapas anteriores por outros colaboradores.")
+                    st.warning("Você possui ações principais, mas elas estão BLOQUEADAS aguardando etapas anteriores.")
                 else:
                     for acao in acoes_filtradas:
                         titulo_prob = prob_map.get(acao['problem_id'], "Excluído")
@@ -489,12 +536,14 @@ def pagina_acoes():
                         with st.expander(f"{cor_status} Ação #{acao['id']} - {acao['descricao']}", expanded=True):
                             st.write(f"**Origem:** Alerta #{acao['problem_id']} ({titulo_prob})")
                             st.write(f"**Prazo:** {acao['prazo'][:10]}")
-                            if st.button("Abrir Alerta e Editar Ação", key=f"j_{acao['id']}", type="primary"): teletransportar_para_alerta(acao['problem_id'])
-            else: st.success("Nenhuma ação encontrada.")
+                            if st.button("Abrir Alerta (Para gerenciar a Ação e Tarefas)", key=f"jump_{acao['id']}", type="primary"):
+                                teletransportar_para_alerta(acao['problem_id'])
+            else:
+                st.info("Nenhuma ação encontrada.")
     except Exception as e: st.error(f"Erro: {e}")
 
 def pagina_colaboradores():
-    st.header("👥 Gestão de Colaboradores")
+    st.header("👥 Gestão de Colaboradores e Acessos")
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
     opcoes_sub = ["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"] if is_admin else ["📋 Lista de Colaboradores"]
@@ -545,7 +594,8 @@ def pagina_colaboradores():
                         idx_area = areas.index(user_data['area']) if user_data['area'] in areas else 0
                         edit_area = st.selectbox("Área", areas, index=idx_area)
                     with col2:
-                        edit_papel = st.selectbox("Nível de Acesso", ["User", "Facilitador", "Admin"], index=["User", "Facilitador", "Admin"].index(user_data['role']))
+                        roles = ["User", "Facilitador", "Admin"]
+                        edit_papel = st.selectbox("Nível de Acesso", roles, index=roles.index(user_data['role']))
                         edit_ativo = st.checkbox("Colaborador Ativo", value=user_data['ativo'])
                     
                     if st.form_submit_button("Salvar Alterações"):
@@ -555,12 +605,10 @@ def pagina_colaboradores():
                             supabase.table("usuarios").update({"nome": edit_nome, "area": edit_area, "role": edit_papel, "ativo": edit_ativo}).eq("login", usuario_selecionado).execute()
                             st.success("Atualizado!"); st.rerun()
                             
-                # RESET DE SENHA EXCLUSIVO DO ADMIN AQUI
                 st.markdown("---")
-                st.markdown("#### 🔒 Segurança")
                 if st.button(f"Forçar Reset de Senha do usuário '{usuario_selecionado}' para WEG2026", type="primary"):
                     supabase.table("usuarios").update({"senha": "WEG2026"}).eq("login", usuario_selecionado).execute()
-                    st.success(f"Senha de {usuario_selecionado} foi resetada para o padrão com sucesso!")
+                    st.success(f"Senha resetada para o padrão com sucesso!")
 
 def pagina_administracao():
     st.header("⚙️ Administração")
@@ -580,7 +628,7 @@ def pagina_administracao():
                     try:
                         supabase.table("locais").insert({"nome": novo_local}).execute()
                         st.success("Local adicionado!"); st.rerun()
-                    except: st.error("Este local já existe ou ocorreu um erro.")
+                    except: st.error("Este local já existe ou erro.")
         
         st.markdown("---")
         st.subheader("👨‍💼 Facilitadores")
@@ -608,9 +656,9 @@ def pagina_administracao():
         except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
         with st.form("form_sla"):
             c1, c2, c3 = st.columns(3)
-            with c1: dias_u = st.number_input("Urgente (Dias)", value=sla_configs['urgente_dias'], min_value=1)
-            with c2: dias_n = st.number_input("Normal (Dias)", value=sla_configs['normal_dias'], min_value=1)
-            with c3: dias_b = st.number_input("Baixo (Dias)", value=sla_configs['baixo_dias'], min_value=1)
+            with c1: dias_u = st.number_input("Urgente", value=sla_configs['urgente_dias'], min_value=1)
+            with c2: dias_n = st.number_input("Normal", value=sla_configs['normal_dias'], min_value=1)
+            with c3: dias_b = st.number_input("Baixo", value=sla_configs['baixo_dias'], min_value=1)
             if st.form_submit_button("Atualizar SLA"):
                 supabase.table("sla_settings").upsert({"id": 1, "urgente_dias": dias_u, "normal_dias": dias_n, "baixo_dias": dias_b}).execute()
                 st.success("Atualizado!"); st.rerun()
