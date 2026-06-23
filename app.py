@@ -7,39 +7,24 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================================
-# 1. CONFIGURAÇÃO DA PÁGINA E CSS ABSOLUTO
+# 1. CONFIGURAÇÃO DA PÁGINA
 # ==========================================
 st.set_page_config(page_title="Central de Alertas - WEG", page_icon="🚨", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-        /* 1. Salva a vida do Botão de Menu (Hambúrguer) */
-        header[data-testid="stHeader"] { 
-            background-color: transparent !important; 
-            z-index: 999999 !important; /* Força ficar na frente do topo azul */
-        }
-        
-        /* Pinta o ícone do hambúrguer de branco para dar contraste */
-        header[data-testid="stHeader"] svg {
-            stroke: white !important;
-            fill: white !important;
-        }
-
+        header[data-testid="stHeader"] { display: none !important; }
         .block-container { padding-top: 0rem !important; }
-        
-        /* 2. O TOPO AZUL WEG INABALÁVEL */
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child {
             position: -webkit-sticky !important; position: sticky !important; top: 0px !important;
-            background-color: #00579D !important; z-index: 9999 !important;
+            background-color: #00579D !important; z-index: 99999 !important;
             padding: 1rem 2rem 1rem 2rem !important; margin-left: -3rem !important; margin-right: -3rem !important; margin-bottom: 2rem !important;
             border-bottom: 3px solid #003B6E !important; box-shadow: 0px 4px 10px rgba(0,0,0,0.15) !important;
         }
-        
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child h3,
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child span,
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child p { color: white !important; }
-        
-        /* Textos do Popover (Sino) sempre escuros */
+        section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child button p { color: #333333 !important; }
         div[data-testid="stPopoverBody"] p, div[data-testid="stPopoverBody"] span, div[data-testid="stPopoverBody"] strong { color: #333333 !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -107,19 +92,8 @@ def enviar_notificacao(user_login, titulo, corpo, link="", send_email=True):
                 enviar_email(resp.data[0]['email'], f"[WEG Alertas] {titulo}", f"<p>Você tem uma nova notificação:</p><div style='padding:15px; border-left: 4px solid #00579D;'><strong>{titulo}</strong><br>{corpo}</div>")
     except: pass
 
-def aprovar_solicitacao_acesso(req_id, req_email, req_nome):
-    supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
-    login_extraido = req_email.strip().lower().split('@')[0]
-    check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
-    if len(check.data) == 0:
-        supabase.table("usuarios").insert({"login": login_extraido, "nome": req_nome, "email": req_email, "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True}).execute()
-        enviar_email(req_email, "Acesso Aprovado", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Usuário: <b>{login_extraido}</b> | Senha: <b>WEG2026</b>")
-
-def rejeitar_solicitacao_acesso(req_id):
-    supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
-
 # ==========================================
-# 4. TELAS DE LOGIN E RESET
+# 4. LOGIN E CABEÇALHO
 # ==========================================
 def render_login():
     col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -226,6 +200,7 @@ def pagina_dashboard():
     df['criado_em'], df['sla_due_at'] = pd.to_datetime(df['criado_em']), pd.to_datetime(df['sla_due_at'])
     hoje = datetime.datetime.now()
 
+    # --- 1. KPIs PRINCIPAIS ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚨 Abertos", len(df[df['status'] == 'aberto']))
     c2.metric("⚙️ Em Andamento", len(df[df['status'] == 'aprovado']))
@@ -233,25 +208,50 @@ def pagina_dashboard():
     c3.metric("🔥 Vencidos", venc, delta="Atenção!" if venc > 0 else "No Prazo", delta_color="inverse")
     c4.metric("✅ Solucionados", len(df[df['status'] == 'solucionado']))
 
-    colA, colB = st.columns([1, 1])
-    with colA:
-        st.subheader("📈 Alertas por Área")
-        st.bar_chart(df['area'].value_counts().reset_index().set_index('area'), color="#00579D")
-    with colB:
-        st.subheader("🔥 Top Alertas Críticos")
-        df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
-        if not df_criticos.empty:
-            df_criticos['peso'] = df_criticos['prioridade'].map({"Urgente": 1, "Normal": 2, "Baixo": 3})
-            for _, row in df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10).iterrows():
-                with st.container():
-                    st.markdown(f"**#{row['id']} - {row['titulo']}**")
-                    cx1, cx2, cx3 = st.columns([2,2,2])
-                    cx1.markdown(f"<span style='color: {'red' if row['prioridade']=='Urgente' else 'orange'};'>{row['prioridade']}</span>", unsafe_allow_html=True)
-                    cx2.caption(f"Vence: {row['sla_due_at'].strftime('%d/%m/%Y')}")
-                    with cx3:
-                        if st.button("Acessar", key=f"dash_prob_{row['id']}"): teletransportar_para_alerta(row['id'])
-                    st.divider()
-        else: st.success("Tudo sob controle!")
+    st.markdown("---")
+    
+    # --- 2. GRÁFICOS INTELIGENTES (STATUS, PRIORIDADE, ÁREA) ---
+    st.subheader("📈 Análise de Alertas")
+    
+    g1, g2, g3 = st.columns(3)
+    
+    with g1:
+        st.markdown("**Por Status**")
+        df_status = df['status'].value_counts().reset_index()
+        df_status.columns = ['Status', 'Qtd']
+        df_status['Status'] = df_status['Status'].str.upper() # Deixa mais bonito
+        st.bar_chart(df_status.set_index('Status'), color="#00579D")
+
+    with g2:
+        st.markdown("**Por Prioridade**")
+        df_prio = df['prioridade'].value_counts().reset_index()
+        df_prio.columns = ['Prioridade', 'Qtd']
+        # Usamos uma cor diferente para destacar
+        st.bar_chart(df_prio.set_index('Prioridade'), color="#00a0e3")
+
+    with g3:
+        st.markdown("**Por Área**")
+        df_area = df['area'].value_counts().reset_index()
+        df_area.columns = ['Área', 'Qtd']
+        st.bar_chart(df_area.set_index('Área'), color="#003B6E")
+
+    st.markdown("---")
+
+    # --- 3. ALERTAS CRÍTICOS (LISTA DE AÇÃO) ---
+    st.subheader("🔥 Top Alertas Críticos")
+    df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
+    if not df_criticos.empty:
+        df_criticos['peso'] = df_criticos['prioridade'].map({"Urgente": 1, "Normal": 2, "Baixo": 3})
+        for _, row in df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10).iterrows():
+            with st.container():
+                st.markdown(f"**#{row['id']} - {row['titulo']}**")
+                cx1, cx2, cx3 = st.columns([2,2,2])
+                cx1.markdown(f"<span style='color: {'red' if row['prioridade']=='Urgente' else 'orange'};'>{row['prioridade']}</span>", unsafe_allow_html=True)
+                cx2.caption(f"Vence: {row['sla_due_at'].strftime('%d/%m/%Y')}")
+                with cx3:
+                    if st.button("Acessar", key=f"dash_prob_{row['id']}"): teletransportar_para_alerta(row['id'])
+                st.divider()
+    else: st.success("Tudo sob controle!")
 
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
@@ -377,7 +377,10 @@ def pagina_problemas():
                                                 enviar_notificacao(alerta['criado_por'], "Alerta Rejeitado", f"O alerta #{alerta['id']} foi rejeitado. Motivo: {motivo}", f"Problemas|{alerta['id']}")
                                                 st.rerun()
                             
-                            # AÇÕES CORRETIVAS E TAREFAS (DELEGAÇÃO)
+                            elif alerta['status'] == 'rejeitado':
+                                just_db = supabase.table("problem_justifications").select("*").eq("problem_id", alerta['id']).eq("acao", "rejeitado").execute().data
+                                st.error(f"🚨 **ALERTA REJEITADO (Fechado)**\n\n**Motivo:** {just_db[-1]['motivo'] if just_db else 'Sem motivo registrado.'}")
+                                
                             elif alerta['status'] in ['aprovado', 'solucionado']:
                                 st.markdown("#### ✅ Plano de Ações Corretivas")
                                 acoes_db = supabase.table("problem_actions").select("*").eq("problem_id", alerta['id']).execute().data
@@ -405,6 +408,7 @@ def pagina_problemas():
                                                     resp_nome = next((u['nome'] for u in users_all if u['login'] == t['responsavel_login']), t['responsavel_login'])
                                                     icone_t = "✅" if t['status'] == 'executada' else "❌" if t['status'] == 'nao_executada' else "⏳"
                                                     st.write(f"{icone_t} **{t['descricao']}** (Resp: {resp_nome})")
+                                                    
                                                     if t['status'] != 'pendente':
                                                         st.caption(f"**Resposta:** {t.get('resolucao_texto', '')}")
                                                         if t.get('precisa_nova_acao'): st.warning("⚠️ Atenção: Colaborador relatou necessidade de criar nova Ação.")
@@ -436,6 +440,7 @@ def pagina_problemas():
                                                         
                                                         if st.form_submit_button("Atualizar Ação"):
                                                             supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
+                                                            
                                                             if novo_status == 'solucionada' and acao['status'] != 'solucionada':
                                                                 deps = supabase.table("problem_actions").select("id, descricao").eq("depende_de_id", acao['id']).execute().data
                                                                 if deps:
@@ -445,7 +450,7 @@ def pagina_problemas():
                                                                         for r in resps_d: enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
                                                                 enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
                                                             st.rerun()
-                                            else: st.info("Apenas os responsáveis editam a Ação.")
+                                            else: st.info("Apenas os responsáveis editam a Ação."); st.write(f"Obs: {acao['observacao']}")
 
                                 st.markdown("##### ➕ Adicionar Nova Ação Principal")
                                 with st.form("form_nova_acao"):
@@ -475,6 +480,7 @@ def pagina_problemas():
                         # --- LADO DIREITO: FÓRUM/CHAT ---
                         with col_dir:
                             st.markdown("#### 💬 Fórum de Insights")
+                            st.caption("Chat focado na resolução deste problema.")
                             reply_key = f"reply_focus_{alerta['id']}"
                             if reply_key not in st.session_state: st.session_state[reply_key] = None
 
@@ -512,7 +518,6 @@ def pagina_acoes():
     st.header("✅ Minhas Ações e Tarefas")
     meu_login = st.session_state['current_user']['login']
     
-    # 1. MOSTRA TAREFAS DELEGADAS PARA MIM
     st.subheader("📌 Minhas Tarefas (Sub-ações)")
     try:
         minhas_tarefas = supabase.table("action_tasks").select("*").eq("responsavel_login", meu_login).execute().data
@@ -544,8 +549,6 @@ def pagina_acoes():
     except Exception as e: st.error(f"Erro nas tarefas: {e}")
 
     st.markdown("---")
-    
-    # 2. MOSTRA AÇÕES PRINCIPAIS ONDE SOU RESPONSÁVEL
     st.subheader("🛠️ Minhas Ações Principais")
     try:
         resp_db = supabase.table("problem_action_responsibles").select("action_id").eq("colaborador_login", meu_login).execute().data
@@ -571,7 +574,7 @@ def pagina_acoes():
     except Exception as e: st.error(f"Erro: {e}")
 
 def pagina_colaboradores():
-    st.header("👥 Gestão de Colaboradores e Acessos")
+    st.header("👥 Gestão de Colaboradores")
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
     opcoes_sub = ["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"] if is_admin else ["📋 Lista de Colaboradores"]
