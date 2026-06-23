@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================================
-# 1. CONFIGURAÇÃO DA PÁGINA E CSS (FIXED HEADER)
+# 1. CONFIGURAÇÃO DA PÁGINA
 # ==========================================
 st.set_page_config(
     page_title="Central de Alertas - WEG",
@@ -15,32 +15,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Injeção de CSS para tornar o Cabeçalho Inteligente e Fixo
-st.markdown("""
-    <style>
-        /* Reduz o espaço branco no topo da tela */
-        .block-container {
-            padding-top: 1.5rem !important;
-        }
-        
-        /* Oculta a linha decorativa nativa do Streamlit para o nosso header brilhar */
-        header[data-testid="stHeader"] {
-            background-color: transparent;
-        }
-
-        /* CONGELA O CABEÇALHO (Sino, Nome e Título) NO TOPO */
-        section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child {
-            position: sticky;
-            top: 2.875rem; 
-            background-color: #F4F7F9; /* Fundo que combina com o tema WEG */
-            z-index: 990; /* Mantém acima das tabelas e gráficos */
-            padding-top: 0.5rem;
-            padding-bottom: 0rem;
-            margin-bottom: 1rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 # ==========================================
 # 2. CONEXÃO COM BANCO DE DADOS E MEMÓRIA
@@ -68,6 +42,12 @@ if 'notif_count' not in st.session_state: st.session_state['notif_count'] = 0
 
 # --- SISTEMA DE TELETRANSPORTE ---
 def teletransportar_para_alerta(alerta_id):
+    st.session_state['alerta_focus'] = alerta_id
+    st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
+    st.session_state['menu_index'] = 1  
+    st.rerun()
+
+def teletransportar_para_forum(alerta_id):
     st.session_state['alerta_focus'] = alerta_id
     st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
     st.session_state['menu_index'] = 1  
@@ -203,14 +183,60 @@ def render_trocar_senha():
                     st.rerun()
 
 # ==========================================
-# 5. COMPONENTES DE LAYOUT
+# 5. COMPONENTES DE LAYOUT (O CABEÇALHO MÁGICO)
 # ==========================================
 def render_header():
-    # O Header é envolvido num container para o CSS Sticky fixar ele inteiro
-    cabecalho = st.container()
-    with cabecalho:
-        col1, col2, col3 = st.columns([7, 2, 2])
-        with col1: st.title("Central de Alertas")
+    # Envolvemos tudo num container para controlar via CSS
+    header_container = st.container()
+    
+    with header_container:
+        # INJEÇÃO CSS PARA HEADER AZUL CORPORATIVO FIXO
+        st.markdown("""
+            <style>
+                /* Remove a barra nativa do topo do Streamlit */
+                header[data-testid="stHeader"] {
+                    display: none !important;
+                }
+                
+                /* Tira o padding morto que fica no topo da página */
+                .block-container {
+                    padding-top: 0rem !important;
+                }
+                
+                /* MÁGICA: Transforma o nosso header no Topo Fixo WEG */
+                div[data-testid="stMainBlockContainer"] > div:first-child {
+                    position: sticky;
+                    top: 0px;
+                    background-color: #00579D;
+                    z-index: 999;
+                    padding: 15px 30px;
+                    margin-left: -5rem; /* Estica para ignorar a margem nativa */
+                    margin-right: -5rem;
+                    margin-bottom: 20px;
+                    border-bottom: 3px solid #003b6e;
+                    box-shadow: 0px 4px 10px rgba(0,0,0,0.2);
+                }
+                
+                /* Força as letras dentro do Cabeçalho a ficarem Brancas */
+                div[data-testid="stMainBlockContainer"] > div:first-child h3,
+                div[data-testid="stMainBlockContainer"] > div:first-child p,
+                div[data-testid="stMainBlockContainer"] > div:first-child span,
+                div[data-testid="stMainBlockContainer"] > div:first-child div {
+                    color: white !important;
+                }
+                
+                /* Ajusta o sino para não quebrar a cor */
+                div[data-testid="stMainBlockContainer"] > div:first-child button {
+                    color: #333 !important; /* O botão do sino volta ao normal para ser legível */
+                }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Conteúdo do Cabeçalho
+        col1, col2, col3 = st.columns([6, 2, 2])
+        
+        with col1: 
+            st.markdown("<h3 style='margin-top: 5px; margin-bottom: 0px;'>Central de Alertas WEG</h3>", unsafe_allow_html=True)
             
         with col2: 
             try:
@@ -224,7 +250,6 @@ def render_header():
             cor_sino = "🔴" if qtd > 0 else "⚪"
             texto_sino = f"🔔 {qtd} Novas" if qtd > 0 else "🔔 Nenhuma"
             
-            st.write("<br>", unsafe_allow_html=True)
             with st.popover(texto_sino, use_container_width=True):
                 st.markdown(f"**Suas Notificações {cor_sino}**")
                 if qtd == 0: st.info("Tudo limpo por aqui!")
@@ -235,7 +260,6 @@ def render_header():
                         if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
                             supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
                             
-                            # ROTEAMENTO PROFUNDO
                             if n['link'].startswith("Problemas") or n['link'].startswith("Fórum"):
                                 partes = n['link'].split("|")
                                 if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
@@ -246,11 +270,7 @@ def render_header():
                             st.rerun()
                             
         with col3: 
-            st.write("<br>", unsafe_allow_html=True)
-            st.markdown(f"**👤 {st.session_state['current_user']['nome']}**<br><span style='font-size:12px; color:gray;'>{st.session_state['current_user']['area']}</span>", unsafe_allow_html=True)
-        
-        # A linha separadora faz parte do cabeçalho fixo
-        st.markdown("---")
+            st.markdown(f"<div style='text-align: right; line-height: 1.2; margin-top: 5px;'><strong style='font-size: 16px;'>👤 {st.session_state['current_user']['nome']}</strong><br><span style='font-size:12px; opacity: 0.8;'>{st.session_state['current_user']['area']}</span></div>", unsafe_allow_html=True)
 
 def render_sidebar():
     try: st.sidebar.image("logo_weg.png", width=150)
@@ -313,6 +333,7 @@ def pagina_dashboard():
     with colB:
         st.subheader("🔥 Top Alertas Críticos")
         df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
+        
         if not df_criticos.empty:
             peso_prio = {"Urgente": 1, "Normal": 2, "Baixo": 3}
             df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
@@ -361,9 +382,7 @@ def pagina_problemas():
                     
                 if not df_prob.empty:
                     df_display = df_prob[['id', 'titulo', 'area', 'prioridade', 'status', 'criado_em', 'sla_due_at']].copy()
-                    
-                    # Tabela com Altura Fixa (Rolagem Inteligente)
-                    st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
+                    st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
                     st.write("<br>", unsafe_allow_html=True)
                     st.markdown("### 🚀 Acesso Rápido")
@@ -509,7 +528,8 @@ def pagina_problemas():
                                                 supabase.table("problem_action_responsibles").insert({"action_id": res.data[0]['id'], "colaborador_login": resp_log}).execute()
                                                 enviar_notificacao(resp_log, "Nova Ação Atribuída 📋", f"Você deve resolver: '{desc_acao}'", "Minhas Ações")
                                             st.success("Ação salva!"); st.rerun()
-                                        else: st.error("Preencha descrição e escolha responsáveis.")
+                                        else:
+                                            st.error("Preencha descrição e escolha responsáveis.")
 
                         # --- LADO DIREITO: FÓRUM/CHAT ---
                         with col_dir:
@@ -547,7 +567,7 @@ def pagina_problemas():
 
                             with st.form(key=f"form_chat_{alerta['id']}", clear_on_submit=True):
                                 novo_comentario = st.text_input("Escreva seu insight aqui (Aperte Enter para enviar)...")
-                                notificar_email = st.checkbox("🔔 Avisar autor do alerta por e-mail", value=False)
+                                notificar_email = st.checkbox("🔔 Avisar autor por e-mail", value=False)
                                 
                                 if st.form_submit_button("Enviar Mensagem"):
                                     if novo_comentario:
@@ -562,7 +582,6 @@ def pagina_problemas():
                                         }).execute()
                                         
                                         st.session_state[reply_key] = None 
-                                        
                                         if st.session_state['current_user']['login'] != alerta['criado_por']:
                                             nome_ajudante = st.session_state['current_user']['nome']
                                             enviar_notificacao(alerta['criado_por'], "Novo Insight no Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Problemas|{alerta['id']}", send_email=notificar_email)
@@ -615,10 +634,8 @@ def pagina_colaboradores():
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
             df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
             def colorir_ativo(val): return f"color: {'green' if val else 'red'}; font-weight: bold;"
-            
-            # Tabela com Altura Fixa (Rolagem Inteligente)
-            try: st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True, height=400)
-            except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True, height=400)
+            try: st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
+            except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
 
     if is_admin:
         if aba_atual == "➕ Adicionar Novo":
@@ -740,10 +757,8 @@ def pagina_administracao():
             df_hist = pd.DataFrame(historico)[['nome', 'email', 'status', 'data']]
             df_hist.columns = ['Nome', 'E-mail', 'Status', 'Data']
             def colorir_status_req(val): return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
-            
-            # Tabela com Altura Fixa (Rolagem Inteligente)
-            try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True, height=400)
-            except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True, height=400)
+            try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
+            except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum histórico disponível.")
 
