@@ -7,25 +7,41 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # ==========================================
-# 1. CONFIGURAÇÃO DA PÁGINA
+# 1. CONFIGURAÇÃO DA PÁGINA E CSS ABSOLUTO
 # ==========================================
 st.set_page_config(page_title="Central de Alertas - WEG", page_icon="🚨", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-        header[data-testid="stHeader"] { display: none !important; }
-        .block-container { padding-top: 0rem !important; }
+        /* 1. Salva o botão de Menu Lateral (Hambúrguer) */
+        header[data-testid="stHeader"] { 
+            background: transparent !important;
+            background-color: transparent !important;
+            z-index: 999999 !important; /* Mantém na frente de tudo */
+        }
+        header[data-testid="stHeader"] svg {
+            fill: white !important;
+            color: white !important;
+        }
+
+        /* 2. Topo Azul WEG Fixo */
+        .block-container { padding-top: 2rem !important; }
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child {
             position: -webkit-sticky !important; position: sticky !important; top: 0px !important;
-            background-color: #00579D !important; z-index: 99999 !important;
+            background-color: #00579D !important; z-index: 99998 !important;
             padding: 1rem 2rem 1rem 2rem !important; margin-left: -3rem !important; margin-right: -3rem !important; margin-bottom: 2rem !important;
             border-bottom: 3px solid #003B6E !important; box-shadow: 0px 4px 10px rgba(0,0,0,0.15) !important;
         }
+        
+        /* Força textos do topo para branco, MENOS as notificações */
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child h3,
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child span,
         section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child p { color: white !important; }
-        section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child button p { color: #333333 !important; }
+        
         div[data-testid="stPopoverBody"] p, div[data-testid="stPopoverBody"] span, div[data-testid="stPopoverBody"] strong { color: #333333 !important; }
+        
+        /* Ajuste do botão dentro da notificação */
+        section[data-testid="stMain"] .block-container > div[data-testid="stVerticalBlock"] > div:first-child button p { color: #333333 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -92,8 +108,19 @@ def enviar_notificacao(user_login, titulo, corpo, link="", send_email=True):
                 enviar_email(resp.data[0]['email'], f"[WEG Alertas] {titulo}", f"<p>Você tem uma nova notificação:</p><div style='padding:15px; border-left: 4px solid #00579D;'><strong>{titulo}</strong><br>{corpo}</div>")
     except: pass
 
+def aprovar_solicitacao_acesso(req_id, req_email, req_nome):
+    supabase.table("solicitacoes").update({"status": "aprovado"}).eq("id", req_id).execute()
+    login_extraido = req_email.strip().lower().split('@')[0]
+    check = supabase.table("usuarios").select("login").eq("login", login_extraido).execute()
+    if len(check.data) == 0:
+        supabase.table("usuarios").insert({"login": login_extraido, "nome": req_nome, "email": req_email, "senha": "WEG2026", "area": "A definir", "role": "User", "ativo": True}).execute()
+        enviar_email(req_email, "Acesso Aprovado", f"Olá {req_nome},<br><br>Seu acesso foi aprovado. Usuário: <b>{login_extraido}</b> | Senha: <b>WEG2026</b>")
+
+def rejeitar_solicitacao_acesso(req_id):
+    supabase.table("solicitacoes").update({"status": "rejeitado"}).eq("id", req_id).execute()
+
 # ==========================================
-# 4. LOGIN E CABEÇALHO
+# 4. TELAS DE LOGIN E RESET
 # ==========================================
 def render_login():
     col1, col2, col3 = st.columns([1, 1.5, 1])
@@ -121,6 +148,7 @@ def render_login():
                         supabase.table("solicitacoes").insert({"nome": req_nome, "email": req_email, "status": "pendente", "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else: st.warning("Preencha todos os campos obrigatórios.")
+        st.write("<br>", unsafe_allow_html=True)
         st.caption("🔒 Caso tenha esquecido sua senha, solicite ao Admin o reset.")
 
 def render_trocar_senha():
@@ -141,6 +169,9 @@ def render_trocar_senha():
                     st.session_state['must_change_password'] = False
                     st.success("Senha alterada com sucesso!"); st.rerun()
 
+# ==========================================
+# 5. COMPONENTES DE LAYOUT (MENU LATERAL CARDS)
+# ==========================================
 def render_header():
     header_container = st.container()
     with header_container:
@@ -176,13 +207,19 @@ def render_sidebar():
     try: st.sidebar.image("logo_weg.png", width=150)
     except: st.sidebar.markdown("**[LOGO WEG]**")
     st.sidebar.markdown("### 🚨 Navegação")
+    
+    # MENU LATERAL COMO BOTÕES/CARDS (ADEUS BOLINHAS!)
     opcoes_menu = ["📊 Dashboard", "⚠️ Problemas", "✅ Minhas Ações", "👥 Colaboradores", "⚙️ Administração"]
-    def update_menu(): st.session_state['menu_index'] = opcoes_menu.index(st.session_state['_menu_radio'])
-    menu_selecionado = st.sidebar.radio("Selecione a página:", opcoes_menu, index=st.session_state['menu_index'], key='_menu_radio', on_change=update_menu)
+    
+    for i, opcao in enumerate(opcoes_menu):
+        estilo = "primary" if st.session_state['menu_index'] == i else "secondary"
+        if st.sidebar.button(opcao, key=f"side_btn_{i}", use_container_width=True, type=estilo):
+            st.session_state['menu_index'] = i
+            st.rerun()
+            
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Logado como: **{st.session_state['current_user']['role']}**")
     if st.sidebar.button("Sair (Logout)", use_container_width=True): fazer_logout()
-    return menu_selecionado
 
 # ==========================================
 # 6. PÁGINAS DO SISTEMA
@@ -231,16 +268,17 @@ def pagina_problemas():
     
     try: areas = [l['nome'] for l in supabase.table("locais").select("nome").order("nome").execute().data]
     except: areas = ["Geral"]
-    
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
+    # === SUB-MENU INTELIGENTE (BOTÕES HORIZONTAIS) ===
     opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Sala de Controle (Detalhes e Fórum)"]
     if st.session_state['sub_menu_prob'] not in opcoes_sub: st.session_state['sub_menu_prob'] = opcoes_sub[0]
 
     cols_btn = st.columns(len(opcoes_sub))
     for i, opcao in enumerate(opcoes_sub):
-        if cols_btn[i].button(opcao, type="primary" if st.session_state['sub_menu_prob'] == opcao else "secondary", use_container_width=True, key=f"btn_s_prob_{i}"):
+        estilo_btn = "primary" if st.session_state['sub_menu_prob'] == opcao else "secondary"
+        if cols_btn[i].button(opcao, type=estilo_btn, use_container_width=True, key=f"btn_s_prob_{i}"):
             st.session_state['sub_menu_prob'] = opcao; st.rerun()
 
     aba_atual = st.session_state['sub_menu_prob']
@@ -402,32 +440,27 @@ def pagina_problemas():
                                                 
                                             st.markdown("---")
                                             
-                                            # --- ATUALIZAÇÃO DA AÇÃO EM SI (AMORTECEDOR DE STATUS AQUI) ---
+                                            # --- ATUALIZAÇÃO DA AÇÃO EM SI ---
                                             if is_admin or is_action_resp:
                                                 if acao['status'] == 'bloqueada':
                                                     st.error("🔒 Ação bloqueada aguardando conclusão da anterior.")
                                                 else:
                                                     with st.form(f"f_acao_{acao['id']}"):
-                                                        # Amortecedor para status legados ou inesperados no banco
-                                                        opcoes_st = ["pendente", "liberada", "em_andamento", "solucionado"]
-                                                        if acao['status'] not in opcoes_st: opcoes_st.append(acao['status'])
-                                                        
-                                                        novo_status = st.selectbox("Status", opcoes_st, index=opcoes_st.index(acao['status']))
+                                                        opcoes_st = ["pendente", "liberada", "em_andamento", "solucionado", "solucionada"]
+                                                        idx_st = opcoes_st.index(acao['status']) if acao['status'] in opcoes_st else 1
+                                                        novo_status = st.selectbox("Status", ["liberada", "solucionada"], index=0 if idx_st < 3 else 1)
                                                         nova_obs = st.text_area("Observações", value=acao['observacao'] if acao['observacao'] else "")
                                                         
                                                         if st.form_submit_button("Atualizar Ação"):
                                                             supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
                                                             
-                                                            # CASCATA DE LIBERAÇÃO: Se concluiu essa, libera as que dependem dela!
-                                                            if novo_status == 'solucionado' and acao['status'] != 'solucionado':
+                                                            if novo_status == 'solucionada' and acao['status'] != 'solucionada':
                                                                 deps = supabase.table("problem_actions").select("id, descricao").eq("depende_de_id", acao['id']).execute().data
                                                                 if deps:
                                                                     for d in deps:
                                                                         supabase.table("problem_actions").update({"status": "liberada"}).eq("id", d['id']).execute()
                                                                         resps_d = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", d['id']).execute().data
-                                                                        for r in resps_d:
-                                                                            enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
-                                                                            
+                                                                        for r in resps_d: enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
                                                                 enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
                                                             st.rerun()
                                             else: st.info("Apenas os responsáveis editam a Ação."); st.write(f"Obs: {acao['observacao']}")
@@ -556,12 +589,14 @@ def pagina_colaboradores():
     st.header("👥 Gestão de Colaboradores")
     is_admin = st.session_state['current_user']['role'] == 'Admin'
     
+    # === SUB-MENU INTELIGENTE DE COLABORADORES ===
     opcoes_sub = ["📋 Lista de Colaboradores", "➕ Adicionar Novo", "✏️ Editar / Desativar"] if is_admin else ["📋 Lista de Colaboradores"]
     if st.session_state['sub_menu_colab'] not in opcoes_sub: st.session_state['sub_menu_colab'] = opcoes_sub[0]
 
     cols_btn = st.columns(len(opcoes_sub))
     for i, opcao in enumerate(opcoes_sub):
-        if cols_btn[i].button(opcao, type="primary" if st.session_state['sub_menu_colab'] == opcao else "secondary", use_container_width=True, key=f"btn_s_colab_{i}"):
+        estilo_btn = "primary" if st.session_state['sub_menu_colab'] == opcao else "secondary"
+        if cols_btn[i].button(opcao, type=estilo_btn, use_container_width=True, key=f"btn_s_colab_{i}"):
             st.session_state['sub_menu_colab'] = opcao; st.rerun()
 
     aba_atual = st.session_state['sub_menu_colab']
@@ -692,12 +727,18 @@ def main():
     elif st.session_state['must_change_password']: render_trocar_senha()
     else:
         render_header()
-        pagina_atual = render_sidebar()
-        if "Dashboard" in pagina_atual: pagina_dashboard()
-        elif "Problemas" in pagina_atual: pagina_problemas()
-        elif "Ações" in pagina_atual: pagina_acoes()
-        elif "Colaboradores" in pagina_atual: pagina_colaboradores()
-        elif "Administração" in pagina_atual: pagina_administracao()
+        
+        # AQUI FICA O NOVO MENU LATERAL DE BOTÕES
+        col_menu = st.sidebar.container()
+        with col_menu:
+            render_sidebar()
+            
+        pagina_atual = st.session_state['menu_index']
+        if pagina_atual == 0: pagina_dashboard()
+        elif pagina_atual == 1: pagina_problemas()
+        elif pagina_atual == 2: pagina_acoes()
+        elif pagina_atual == 3: pagina_colaboradores()
+        elif pagina_atual == 4: pagina_administracao()
 
 if __name__ == "__main__":
     main()
