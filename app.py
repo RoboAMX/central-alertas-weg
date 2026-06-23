@@ -16,6 +16,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Injeção de CSS leve apenas para melhorar o uso da tela (sem pintar a casa inteira)
+st.markdown("""
+    <style>
+        .block-container { padding-top: 1.5rem !important; }
+        header[data-testid="stHeader"] { display: none !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 # ==========================================
 # 2. CONEXÃO COM BANCO DE DADOS E MEMÓRIA
 # ==========================================
@@ -49,7 +57,7 @@ def teletransportar_para_alerta(alerta_id):
 
 def teletransportar_para_forum(alerta_id):
     st.session_state['alerta_focus'] = alerta_id
-    st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
+    st.session_state['sub_menu_prob'] = "💬 Fórum de Discussão"
     st.session_state['menu_index'] = 1  
     st.rerun()
 
@@ -183,94 +191,53 @@ def render_trocar_senha():
                     st.rerun()
 
 # ==========================================
-# 5. COMPONENTES DE LAYOUT (O CABEÇALHO MÁGICO)
+# 5. COMPONENTES DE LAYOUT (LIMPO E SEGURO)
 # ==========================================
 def render_header():
-    # Envolvemos tudo num container para controlar via CSS
-    header_container = st.container()
-    
-    with header_container:
-        # INJEÇÃO CSS PARA HEADER AZUL CORPORATIVO FIXO
-        st.markdown("""
-            <style>
-                /* Remove a barra nativa do topo do Streamlit */
-                header[data-testid="stHeader"] {
-                    display: none !important;
-                }
-                
-                /* Tira o padding morto que fica no topo da página */
-                .block-container {
-                    padding-top: 0rem !important;
-                }
-                
-                /* MÁGICA: Transforma o nosso header no Topo Fixo WEG */
-                div[data-testid="stMainBlockContainer"] > div:first-child {
-                    position: sticky;
-                    top: 0px;
-                    background-color: #00579D;
-                    z-index: 999;
-                    padding: 15px 30px;
-                    margin-left: -5rem; /* Estica para ignorar a margem nativa */
-                    margin-right: -5rem;
-                    margin-bottom: 20px;
-                    border-bottom: 3px solid #003b6e;
-                    box-shadow: 0px 4px 10px rgba(0,0,0,0.2);
-                }
-                
-                /* Força as letras dentro do Cabeçalho a ficarem Brancas */
-                div[data-testid="stMainBlockContainer"] > div:first-child h3,
-                div[data-testid="stMainBlockContainer"] > div:first-child p,
-                div[data-testid="stMainBlockContainer"] > div:first-child span,
-                div[data-testid="stMainBlockContainer"] > div:first-child div {
-                    color: white !important;
-                }
-                
-                /* Ajusta o sino para não quebrar a cor */
-                div[data-testid="stMainBlockContainer"] > div:first-child button {
-                    color: #333 !important; /* O botão do sino volta ao normal para ser legível */
-                }
-            </style>
-        """, unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([7, 2, 2])
+    with col1: 
+        st.markdown("<h2 style='color: #00579D; margin-top: 0px;'>Central de Alertas</h2>", unsafe_allow_html=True)
         
-        # Conteúdo do Cabeçalho
-        col1, col2, col3 = st.columns([6, 2, 2])
+    with col2: 
+        try:
+            notifs = supabase.table("notifications").select("*").eq("user_login", st.session_state['current_user']['login']).eq("lida", False).order("id", desc=True).execute().data
+            qtd = len(notifs)
+        except: notifs = []; qtd = 0
+            
+        if qtd > st.session_state['notif_count']: st.toast("Você tem novas notificações!", icon="🔔")
+        st.session_state['notif_count'] = qtd
+            
+        cor_sino = "🔴" if qtd > 0 else "⚪"
+        texto_sino = f"🔔 {qtd} Novas" if qtd > 0 else "🔔 Nenhuma"
         
-        with col1: 
-            st.markdown("<h3 style='margin-top: 5px; margin-bottom: 0px;'>Central de Alertas WEG</h3>", unsafe_allow_html=True)
-            
-        with col2: 
-            try:
-                notifs = supabase.table("notifications").select("*").eq("user_login", st.session_state['current_user']['login']).eq("lida", False).order("id", desc=True).execute().data
-                qtd = len(notifs)
-            except: notifs = []; qtd = 0
-                
-            if qtd > st.session_state['notif_count']: st.toast("Você tem novas notificações!", icon="🔔")
-            st.session_state['notif_count'] = qtd
-                
-            cor_sino = "🔴" if qtd > 0 else "⚪"
-            texto_sino = f"🔔 {qtd} Novas" if qtd > 0 else "🔔 Nenhuma"
-            
-            with st.popover(texto_sino, use_container_width=True):
-                st.markdown(f"**Suas Notificações {cor_sino}**")
-                if qtd == 0: st.info("Tudo limpo por aqui!")
-                else:
-                    for n in notifs:
-                        st.warning(f"**{n['titulo']}**\n\n{n['corpo']}")
-                        txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
-                        if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
-                            supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
-                            
-                            if n['link'].startswith("Problemas") or n['link'].startswith("Fórum"):
-                                partes = n['link'].split("|")
-                                if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
-                                st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
-                                st.session_state['menu_index'] = 1
-                            elif n['link'] == "Minhas Ações":
-                                st.session_state['menu_index'] = 2
-                            st.rerun()
-                            
-        with col3: 
-            st.markdown(f"<div style='text-align: right; line-height: 1.2; margin-top: 5px;'><strong style='font-size: 16px;'>👤 {st.session_state['current_user']['nome']}</strong><br><span style='font-size:12px; opacity: 0.8;'>{st.session_state['current_user']['area']}</span></div>", unsafe_allow_html=True)
+        st.write("<br>", unsafe_allow_html=True)
+        with st.popover(texto_sino, use_container_width=True):
+            st.markdown(f"**Suas Notificações {cor_sino}**")
+            if qtd == 0: st.info("Tudo limpo por aqui!")
+            else:
+                for n in notifs:
+                    st.warning(f"**{n['titulo']}**\n\n{n['corpo']}")
+                    txt_btn = "Acessar Link" if n['link'] else "Marcar como Lida"
+                    if st.button(txt_btn, key=f"read_{n['id']}", type="primary"):
+                        supabase.table("notifications").update({"lida": True}).eq("id", n['id']).execute()
+                        if n['link'].startswith("Problemas"):
+                            partes = n['link'].split("|")
+                            if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
+                            st.session_state['sub_menu_prob'] = "🔍 Sala de Controle (Detalhes e Fórum)"
+                            st.session_state['menu_index'] = 1
+                        elif n['link'].startswith("Fórum"):
+                            partes = n['link'].split("|")
+                            if len(partes) > 1: st.session_state['alerta_focus'] = int(partes[1])
+                            st.session_state['sub_menu_prob'] = "💬 Fórum de Discussão"
+                            st.session_state['menu_index'] = 1
+                        elif n['link'] == "Minhas Ações":
+                            st.session_state['menu_index'] = 2
+                        st.rerun()
+                        
+    with col3: 
+        st.write("<br>", unsafe_allow_html=True)
+        st.markdown(f"**👤 {st.session_state['current_user']['nome']}**<br><span style='font-size:12px; color:gray;'>{st.session_state['current_user']['area']}</span>", unsafe_allow_html=True)
+    st.markdown("---")
 
 def render_sidebar():
     try: st.sidebar.image("logo_weg.png", width=150)
@@ -287,7 +254,7 @@ def render_sidebar():
     return menu_selecionado
 
 # ==========================================
-# 6. PÁGINAS DO SISTEMA COMPLETAS
+# 6. PÁGINAS DO SISTEMA
 # ==========================================
 def pagina_dashboard():
     st.header("📊 Dashboard de Performance")
@@ -333,7 +300,6 @@ def pagina_dashboard():
     with colB:
         st.subheader("🔥 Top Alertas Críticos")
         df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
-        
         if not df_criticos.empty:
             peso_prio = {"Urgente": 1, "Normal": 2, "Baixo": 3}
             df_criticos['peso'] = df_criticos['prioridade'].map(peso_prio)
@@ -361,7 +327,7 @@ def pagina_problemas():
     try: sla_configs = supabase.table("sla_settings").select("*").eq("id", 1).execute().data[0]
     except: sla_configs = {"urgente_dias": 1, "normal_dias": 3, "baixo_dias": 5}
 
-    opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Sala de Controle (Detalhes e Fórum)"]
+    opcoes_sub = ["📋 Listagem de Alertas", "➕ Abrir Novo Alerta", "🔍 Sala de Controle (Detalhes e Fórum)", "💬 Fórum de Discussão"]
     idx_sub = opcoes_sub.index(st.session_state['sub_menu_prob']) if st.session_state['sub_menu_prob'] in opcoes_sub else 0
     
     aba_atual = st.radio("Navegação:", opcoes_sub, index=idx_sub, horizontal=True)
@@ -382,7 +348,9 @@ def pagina_problemas():
                     
                 if not df_prob.empty:
                     df_display = df_prob[['id', 'titulo', 'area', 'prioridade', 'status', 'criado_em', 'sla_due_at']].copy()
-                    st.dataframe(df_display, use_container_width=True, hide_index=True)
+                    
+                    # Rolagem interna para não esticar a tela inteira!
+                    st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
                     
                     st.write("<br>", unsafe_allow_html=True)
                     st.markdown("### 🚀 Acesso Rápido")
@@ -468,15 +436,15 @@ def pagina_problemas():
                                 fac_area = fac_resp.data[0]['facilitador_login'] if fac_resp.data else None
                                 is_facilitator = st.session_state['current_user']['login'] == fac_area
                                 
-                                if is_creator and not is_admin: st.warning("⚠️ Regra: Você não pode aprovar um alerta criado por você mesmo.")
-                                elif not is_admin and not is_facilitator: st.warning("⚠️ Permissão: Apenas o Admin ou o Facilitador da área podem aprovar.")
+                                if is_creator and not is_admin: st.warning("⚠️ Regra: Você não aprova seu próprio alerta.")
+                                elif not is_admin and not is_facilitator: st.warning("⚠️ Permissão: Apenas Admin ou Facilitador da área podem aprovar.")
                                 else:
                                     c_apr, c_rej = st.columns(2)
                                     with c_apr:
                                         if st.button("✅ Aprovar Alerta", use_container_width=True, type="primary"):
                                             supabase.table("problemas").update({"status": "aprovado"}).eq("id", alerta['id']).execute()
                                             supabase.table("problem_justifications").insert({"problem_id": alerta['id'], "autor": st.session_state['current_user']['login'], "acao": "aprovado", "motivo": "Aprovado via painel."}).execute()
-                                            enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado e agora receberá ações.", f"Problemas|{alerta['id']}")
+                                            enviar_notificacao(alerta['criado_por'], "Alerta Aprovado", f"Seu alerta #{alerta['id']} foi aprovado.", f"Problemas|{alerta['id']}")
                                             st.success("Aprovado!"); st.rerun()
                                     with c_rej:
                                         with st.popover("❌ Rejeitar", use_container_width=True):
@@ -587,8 +555,85 @@ def pagina_problemas():
                                             enviar_notificacao(alerta['criado_por'], "Novo Insight no Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Problemas|{alerta['id']}", send_email=notificar_email)
                                         st.rerun()
                                     else: st.warning("Escreva alguma coisa antes de enviar.")
-
         except Exception as e: st.error(f"Erro na exibição dos detalhes: {e}")
+
+    # ABA 4: FÓRUM ISOLADO (CASO O USUÁRIO QUEIRA TELA CHEIA)
+    elif aba_atual == "💬 Fórum de Discussão":
+        try:
+            problemas_db = supabase.table("problemas").select("*").order("id", desc=True).execute().data
+            if problemas_db:
+                opcoes_ids = [""] + [str(p['id']) + f" - {p['titulo']}" for p in problemas_db]
+                idx_padrao = 0
+                if st.session_state['alerta_focus']:
+                    for i, opt in enumerate(opcoes_ids):
+                        if opt.startswith(str(st.session_state['alerta_focus']) + " -"):
+                            idx_padrao = i; break
+                            
+                def limpa_foco_forum(): st.session_state['alerta_focus'] = None
+
+                id_selecionado = st.selectbox("Selecione o Alerta para acessar o Fórum:", opcoes_ids, index=idx_padrao, key='_sel_alerta_forum', on_change=limpa_foco_forum)
+                
+                if id_selecionado != "":
+                    id_real = int(id_selecionado.split(" - ")[0])
+                    alerta = next((p for p in problemas_db if p['id'] == id_real), None)
+                    
+                    if alerta:
+                        st.markdown(f"### 💬 Fórum: #{alerta['id']} - {alerta['titulo']}")
+                        st.caption("Chat em tela cheia focado na resolução deste problema.")
+                        st.markdown("---")
+                        
+                        reply_key = f"reply_focus_{alerta['id']}"
+                        if reply_key not in st.session_state: st.session_state[reply_key] = None
+
+                        caixa_chat = st.container(height=600)
+                        
+                        with caixa_chat:
+                            comments_db = supabase.table("problem_comments").select("*").eq("problem_id", alerta['id']).order("id", desc=False).execute().data
+                            if comments_db:
+                                for c in comments_db:
+                                    autor_nome = next((u['nome'] for u in users_db if u['login'] == c['autor']), c['autor'])
+                                    data_f = c['criado_em'][:16].replace('T', ' ')
+                                    is_me = c['autor'] == st.session_state['current_user']['login']
+                                    
+                                    with st.chat_message("user" if is_me else "assistant", avatar="🧑‍💻" if is_me else "💡"):
+                                        st.markdown(f"**{'Você' if is_me else autor_nome}** *(em {data_f})*")
+                                        st.write(c['texto'])
+                                        if st.button("↩️ Responder", key=f"btn_rep_full_{c['id']}"):
+                                            st.session_state[reply_key] = {"nome": 'Você' if is_me else autor_nome, "texto": c['texto']}
+                                            st.rerun()
+                            else: st.info("Nenhum insight ainda. Seja o primeiro a dar um pitaco!")
+                        
+                        st.write("<br>", unsafe_allow_html=True)
+                        
+                        if st.session_state[reply_key]:
+                            rep = st.session_state[reply_key]
+                            st.info(f"↩️ **Respondendo a {rep['nome']}:** _{rep['texto'][:50]}..._")
+                            if st.button("❌ Cancelar Resposta", key=f"canc_rep_full_{alerta['id']}"):
+                                st.session_state[reply_key] = None; st.rerun()
+
+                        with st.form(key=f"form_chat_full_{alerta['id']}", clear_on_submit=True):
+                            novo_comentario = st.text_input("Escreva seu insight aqui (Aperte Enter para enviar)...")
+                            notificar_email = st.checkbox("🔔 Avisar autor por e-mail", value=False)
+                            
+                            if st.form_submit_button("Enviar Mensagem"):
+                                if novo_comentario:
+                                    texto_final = novo_comentario
+                                    if st.session_state[reply_key]:
+                                        rep = st.session_state[reply_key]
+                                        texto_final = f"> **Em resposta a {rep['nome']}:**\n> _{rep['texto']}_\n\n{novo_comentario}"
+                                        
+                                    supabase.table("problem_comments").insert({
+                                        "problem_id": alerta['id'], "autor": st.session_state['current_user']['login'],
+                                        "texto": texto_final, "criado_em": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    }).execute()
+                                    
+                                    st.session_state[reply_key] = None 
+                                    if st.session_state['current_user']['login'] != alerta['criado_por']:
+                                        nome_ajudante = st.session_state['current_user']['nome']
+                                        enviar_notificacao(alerta['criado_por'], "Novo Insight no Alerta 💡", f"{nome_ajudante} comentou no seu Alerta #{alerta['id']}.", f"Problemas|{alerta['id']}", send_email=notificar_email)
+                                    st.rerun()
+                                else: st.warning("Escreva alguma coisa antes de enviar.")
+        except Exception as e: st.error(f"Erro ao carregar o chat: {e}")
 
 def pagina_acoes():
     st.header("✅ Minhas Ações Corretivas")
@@ -634,8 +679,8 @@ def pagina_colaboradores():
             df_display = df_users[['login', 'nome', 'email', 'area', 'role', 'ativo']].copy()
             df_display.columns = ['Usuário', 'Nome Completo', 'E-mail', 'Área / Setor', 'Papel', 'Status Ativo']
             def colorir_ativo(val): return f"color: {'green' if val else 'red'}; font-weight: bold;"
-            try: st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
-            except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True)
+            try: st.dataframe(df_display.style.map(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True, height=400)
+            except: st.dataframe(df_display.style.applymap(colorir_ativo, subset=['Status Ativo']), use_container_width=True, hide_index=True, height=400)
 
     if is_admin:
         if aba_atual == "➕ Adicionar Novo":
@@ -757,8 +802,8 @@ def pagina_administracao():
             df_hist = pd.DataFrame(historico)[['nome', 'email', 'status', 'data']]
             df_hist.columns = ['Nome', 'E-mail', 'Status', 'Data']
             def colorir_status_req(val): return f"color: {'green' if val == 'aprovado' else 'red'}; font-weight: bold;"
-            try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
-            except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True)
+            try: st.dataframe(df_hist.style.map(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True, height=400)
+            except: st.dataframe(df_hist.style.applymap(colorir_status_req, subset=['Status']), use_container_width=True, hide_index=True, height=400)
         else:
             st.info("Nenhum histórico disponível.")
 
