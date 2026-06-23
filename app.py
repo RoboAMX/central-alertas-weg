@@ -121,7 +121,6 @@ def render_login():
                         supabase.table("solicitacoes").insert({"nome": req_nome, "email": req_email, "status": "pendente", "data": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).execute()
                         st.success("Solicitação enviada! Aguarde a aprovação do Administrador.")
                     else: st.warning("Preencha todos os campos obrigatórios.")
-        st.write("<br>", unsafe_allow_html=True)
         st.caption("🔒 Caso tenha esquecido sua senha, solicite ao Admin o reset.")
 
 def render_trocar_senha():
@@ -200,7 +199,6 @@ def pagina_dashboard():
     df['criado_em'], df['sla_due_at'] = pd.to_datetime(df['criado_em']), pd.to_datetime(df['sla_due_at'])
     hoje = datetime.datetime.now()
 
-    # --- 1. KPIs PRINCIPAIS ---
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🚨 Abertos", len(df[df['status'] == 'aberto']))
     c2.metric("⚙️ Em Andamento", len(df[df['status'] == 'aprovado']))
@@ -208,50 +206,25 @@ def pagina_dashboard():
     c3.metric("🔥 Vencidos", venc, delta="Atenção!" if venc > 0 else "No Prazo", delta_color="inverse")
     c4.metric("✅ Solucionados", len(df[df['status'] == 'solucionado']))
 
-    st.markdown("---")
-    
-    # --- 2. GRÁFICOS INTELIGENTES (STATUS, PRIORIDADE, ÁREA) ---
-    st.subheader("📈 Análise de Alertas")
-    
-    g1, g2, g3 = st.columns(3)
-    
-    with g1:
-        st.markdown("**Por Status**")
-        df_status = df['status'].value_counts().reset_index()
-        df_status.columns = ['Status', 'Qtd']
-        df_status['Status'] = df_status['Status'].str.upper() # Deixa mais bonito
-        st.bar_chart(df_status.set_index('Status'), color="#00579D")
-
-    with g2:
-        st.markdown("**Por Prioridade**")
-        df_prio = df['prioridade'].value_counts().reset_index()
-        df_prio.columns = ['Prioridade', 'Qtd']
-        # Usamos uma cor diferente para destacar
-        st.bar_chart(df_prio.set_index('Prioridade'), color="#00a0e3")
-
-    with g3:
-        st.markdown("**Por Área**")
-        df_area = df['area'].value_counts().reset_index()
-        df_area.columns = ['Área', 'Qtd']
-        st.bar_chart(df_area.set_index('Área'), color="#003B6E")
-
-    st.markdown("---")
-
-    # --- 3. ALERTAS CRÍTICOS (LISTA DE AÇÃO) ---
-    st.subheader("🔥 Top Alertas Críticos")
-    df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
-    if not df_criticos.empty:
-        df_criticos['peso'] = df_criticos['prioridade'].map({"Urgente": 1, "Normal": 2, "Baixo": 3})
-        for _, row in df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10).iterrows():
-            with st.container():
-                st.markdown(f"**#{row['id']} - {row['titulo']}**")
-                cx1, cx2, cx3 = st.columns([2,2,2])
-                cx1.markdown(f"<span style='color: {'red' if row['prioridade']=='Urgente' else 'orange'};'>{row['prioridade']}</span>", unsafe_allow_html=True)
-                cx2.caption(f"Vence: {row['sla_due_at'].strftime('%d/%m/%Y')}")
-                with cx3:
-                    if st.button("Acessar", key=f"dash_prob_{row['id']}"): teletransportar_para_alerta(row['id'])
-                st.divider()
-    else: st.success("Tudo sob controle!")
+    colA, colB = st.columns([1, 1])
+    with colA:
+        st.subheader("📈 Alertas por Área")
+        st.bar_chart(df['area'].value_counts().reset_index().set_index('area'), color="#00579D")
+    with colB:
+        st.subheader("🔥 Top Alertas Críticos")
+        df_criticos = df[~df['status'].isin(['solucionado', 'rejeitado'])].copy()
+        if not df_criticos.empty:
+            df_criticos['peso'] = df_criticos['prioridade'].map({"Urgente": 1, "Normal": 2, "Baixo": 3})
+            for _, row in df_criticos.sort_values(by=['peso', 'sla_due_at']).head(10).iterrows():
+                with st.container():
+                    st.markdown(f"**#{row['id']} - {row['titulo']}**")
+                    cx1, cx2, cx3 = st.columns([2,2,2])
+                    cx1.markdown(f"<span style='color: {'red' if row['prioridade']=='Urgente' else 'orange'};'>{row['prioridade']}</span>", unsafe_allow_html=True)
+                    cx2.caption(f"Vence: {row['sla_due_at'].strftime('%d/%m/%Y')}")
+                    with cx3:
+                        if st.button("Acessar", key=f"dash_prob_{row['id']}"): teletransportar_para_alerta(row['id'])
+                    st.divider()
+        else: st.success("Tudo sob controle!")
 
 def pagina_problemas():
     st.header("⚠️ Gestão de Problemas e Alertas")
@@ -429,25 +402,32 @@ def pagina_problemas():
                                                 
                                             st.markdown("---")
                                             
-                                            # --- ATUALIZAÇÃO DA AÇÃO EM SI ---
+                                            # --- ATUALIZAÇÃO DA AÇÃO EM SI (AMORTECEDOR DE STATUS AQUI) ---
                                             if is_admin or is_action_resp:
                                                 if acao['status'] == 'bloqueada':
                                                     st.error("🔒 Ação bloqueada aguardando conclusão da anterior.")
                                                 else:
                                                     with st.form(f"f_acao_{acao['id']}"):
-                                                        novo_status = st.selectbox("Status", ["liberada", "solucionada"], index=["liberada", "solucionada"].index(acao['status']))
+                                                        # Amortecedor para status legados ou inesperados no banco
+                                                        opcoes_st = ["pendente", "liberada", "em_andamento", "solucionado"]
+                                                        if acao['status'] not in opcoes_st: opcoes_st.append(acao['status'])
+                                                        
+                                                        novo_status = st.selectbox("Status", opcoes_st, index=opcoes_st.index(acao['status']))
                                                         nova_obs = st.text_area("Observações", value=acao['observacao'] if acao['observacao'] else "")
                                                         
                                                         if st.form_submit_button("Atualizar Ação"):
                                                             supabase.table("problem_actions").update({"status": novo_status, "observacao": nova_obs}).eq("id", acao['id']).execute()
                                                             
-                                                            if novo_status == 'solucionada' and acao['status'] != 'solucionada':
+                                                            # CASCATA DE LIBERAÇÃO: Se concluiu essa, libera as que dependem dela!
+                                                            if novo_status == 'solucionado' and acao['status'] != 'solucionado':
                                                                 deps = supabase.table("problem_actions").select("id, descricao").eq("depende_de_id", acao['id']).execute().data
                                                                 if deps:
                                                                     for d in deps:
                                                                         supabase.table("problem_actions").update({"status": "liberada"}).eq("id", d['id']).execute()
                                                                         resps_d = supabase.table("problem_action_responsibles").select("colaborador_login").eq("action_id", d['id']).execute().data
-                                                                        for r in resps_d: enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
+                                                                        for r in resps_d:
+                                                                            enviar_notificacao(r['colaborador_login'], "Ação Liberada! 🟢", f"A ação anterior concluiu. Agora é com você: '{d['descricao']}'", "Minhas Ações")
+                                                                            
                                                                 enviar_notificacao(alerta['criado_por'], "Ação Concluída ✅", f"Ação '{acao['descricao']}' finalizada!", f"Problemas|{alerta['id']}")
                                                             st.rerun()
                                             else: st.info("Apenas os responsáveis editam a Ação."); st.write(f"Obs: {acao['observacao']}")
@@ -480,7 +460,6 @@ def pagina_problemas():
                         # --- LADO DIREITO: FÓRUM/CHAT ---
                         with col_dir:
                             st.markdown("#### 💬 Fórum de Insights")
-                            st.caption("Chat focado na resolução deste problema.")
                             reply_key = f"reply_focus_{alerta['id']}"
                             if reply_key not in st.session_state: st.session_state[reply_key] = None
 
